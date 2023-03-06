@@ -1,4 +1,4 @@
-from layers2 import MatMul, Softmax_Cross_entropy, WordEmbed
+from layers2 import MatMul, Softmax_Cross_entropy, WordEmbed, WordEmbedDot, SigmoidWithLoss
 import cupy as np
 
 
@@ -12,11 +12,9 @@ class SimpleCbow:
         self.layer4 = Softmax_Cross_entropy()
 
         self.params, self.grads = [], []
-
         self.params += self.layer1.weights
         self.params += self.layer2.weights
         self.params += self.layer3.weights
-
         self.grads += self.layer1.gradients
         self.grads += self.layer2.gradients
         self.grads += self.layer3.gradients
@@ -39,10 +37,32 @@ class SimpleCbow:
         self.layer2.backward(da)
         self.layer1.backward(da)
 
+
 class CBow:
-    def __init__(self, row, cols):
+    def __init__(self, row: int, cols: int, sample_size: int, sample_set):
         W_in = np.random.randn(row, cols)
-        W_out = np.random.randn(cols, row)
+        W_out = np.random.randn(row, cols)
+        self.sample_set = sample_set
         self.layer1 = WordEmbed(W_in)
         self.layer2 = WordEmbed(W_in)
         self.layer3 = WordEmbed(W_out)
+        self.Embedding_dot = [WordEmbedDot(W_out) for _ in range(sample_size+1)]
+        self.Sigmoid_loss = [SigmoidWithLoss(W_out) for _ in range(sample_size+1)]
+        self.weights, self.grads = [], []
+
+        for i in self.Embedding_dot:
+            self.weights += i.weights
+            self.grads += i.grads
+
+    def forward(self, index1, index2):
+        result1 = self.layer1.forward(index1)
+        result2 = self.layer2.forward(index2)
+        h = 0.5*(result2+result1)
+        ls = [i.forward(h, self.sample_set[index]) for index, i in enumerate(self.Embedding_dot)]
+        ls2 = [i.forward(i.params[0][self.sample_set[index]], ls[index]) for index, i in enumerate(self.Sigmoid_loss)]
+        loss = sum(ls2)
+        return loss
+
+    def backward(self, dout):
+        pass
+
