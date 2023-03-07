@@ -1,5 +1,8 @@
 from layers2 import MatMul, Softmax_Cross_entropy, WordEmbed, WordEmbedDot, SigmoidWithLoss
-import cupy as np
+import numpy as np
+import time
+
+
 
 
 class SimpleCbow:
@@ -42,27 +45,37 @@ class CBow:
     def __init__(self, row: int, cols: int, sample_size: int, sample_set):
         W_in = np.random.randn(row, cols)
         W_out = np.random.randn(row, cols)
-        self.sample_set = sample_set
+        self.negative_sample_set = sample_set
         self.layer1 = WordEmbed(W_in)
         self.layer2 = WordEmbed(W_in)
         self.layer3 = WordEmbed(W_out)
         self.Embedding_dot = [WordEmbedDot(W_out) for _ in range(sample_size+1)]
-        self.Sigmoid_loss = [SigmoidWithLoss(W_out) for _ in range(sample_size+1)]
+        self.Sigmoid_loss = [SigmoidWithLoss() for _ in range(sample_size+1)]
         self.weights, self.grads = [], []
 
-        for i in self.Embedding_dot:
+        self.in_layers = [self.layer1, self.layer2, self.layer3]
+        self.in_layers += self.Embedding_dot
+        for i in self.in_layers:
             self.weights += i.weights
             self.grads += i.grads
 
-    def forward(self, index1, index2):
-        result1 = self.layer1.forward(index1)
-        result2 = self.layer2.forward(index2)
+    def forward(self, context, target: list):
+        result1 = self.layer1.forward(context[:, 0])
+        result2 = self.layer2.forward(context[:, 1])
         h = 0.5*(result2+result1)
-        ls = [i.forward(h, self.sample_set[index]) for index, i in enumerate(self.Embedding_dot)]
-        ls2 = [i.forward(i.params[0][self.sample_set[index]], ls[index]) for index, i in enumerate(self.Sigmoid_loss)]
-        loss = sum(ls2)
+        batch_size = len(target)
+        score = self.Embedding_dot[0].forward(h, target)
+        correct_label = np.ones(batch_size, dtype="uint8")
+        negative_label = np.zeros(batch_size, dtype="uint8")
+        loss = self.Sigmoid_loss[0].forward(correct_label, score)
+        negative_score = [self.Embedding_dot[index+1].forward(h, self.negative_sample_set[:, index]) for index in range(len(self.Embedding_dot)-1)]
+        for index in range(len(self.Sigmoid_loss)-1):
+            loss += self.Sigmoid_loss[index + 1].forward(negative_label, negative_score[index])
         return loss
 
-    def backward(self, dout):
-        pass
-
+    def backward(self):
+        dh = 0
+        for Sigmoid_loss, Embedding_dot in zip(self.Sigmoid_loss, self.Embedding_dot):
+            dscore = Sigmoid_loss.backward()
+            dh += Embedding_dot.backward(dscore)
+        return dh
