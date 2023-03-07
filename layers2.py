@@ -1,4 +1,4 @@
-import cupy as np
+import numpy as np
 from functions import cross_entropy_error
 
 
@@ -153,7 +153,8 @@ class WordEmbedDot:
     def forward(self, h, index):
         target = self.embed.forward(index)
         self.cache = (h, target)
-        return np.sum(target*h, axis=1)
+        mat = target*h
+        return np.sum(mat, axis=1)
 
     def backward(self, dout):
         h, target = self.cache
@@ -166,14 +167,13 @@ class WordEmbedDot:
 
 class SigmoidWithLoss:
     def __init__(self):
-        self.params, self.grads = [], []
         self.x, self.y = None, None
 
     def forward(self, true, predict):
         y = Sigmoid().forward(predict)
         self.y = y
         self.x = true
-        loss = cross_entropy_error(self.y, self.x)
+        loss = -(true*np.log(y)+(1-true)*np.log(1-y))
         return loss
 
     def backward(self):
