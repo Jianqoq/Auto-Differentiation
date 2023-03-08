@@ -13,7 +13,6 @@ class MatMul:
         W, = self.weights
         output = np.dot(forward_input, W)
         self.X = forward_input
-
         return output
 
     def backward(self, d_backward_input):
@@ -152,9 +151,13 @@ class WordEmbedDot:
 
     def forward(self, h, index):
         target = self.embed.forward(index)
+        # print()
+        # print('h:',h)
+        # print()
+        # print('target:',target)
+        # print(np.sum(target * h, axis=1))
         self.cache = (h, target)
-        mat = target*h
-        return np.sum(mat, axis=1)
+        return np.sum(target * h, axis=1)
 
     def backward(self, dout):
         h, target = self.cache
@@ -173,7 +176,7 @@ class SigmoidWithLoss:
         y = Sigmoid().forward(predict)
         self.y = y
         self.x = true
-        loss = -(true*np.log(y)+(1-true)*np.log(1-y))
+        loss = -(true*np.log(y + 1e-7)+(1-true)*np.log(1-y+1e-7))
         return loss
 
     def backward(self):

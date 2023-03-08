@@ -43,8 +43,8 @@ class SimpleCbow:
 
 class CBow:
     def __init__(self, row: int, cols: int, sample_size: int, sample_set):
-        W_in = np.random.randn(row, cols)
-        W_out = np.random.randn(row, cols)
+        W_in = 0.01*np.random.randn(row, cols).astype('f')
+        W_out = 0.01*np.random.randn(row, cols).astype('f')
         self.negative_sample_set = sample_set
         self.layer1 = WordEmbed(W_in)
         self.layer2 = WordEmbed(W_in)
@@ -59,7 +59,7 @@ class CBow:
             self.weights += i.weights
             self.grads += i.grads
 
-    def forward(self, context, target: list):
+    def forward(self, context, target, batch):
         result1 = self.layer1.forward(context[:, 0])
         result2 = self.layer2.forward(context[:, 1])
         h = 0.5*(result2+result1)
@@ -68,10 +68,10 @@ class CBow:
         correct_label = np.ones(batch_size, dtype="uint8")
         negative_label = np.zeros(batch_size, dtype="uint8")
         loss = self.Sigmoid_loss[0].forward(correct_label, score)
-        negative_score = [self.Embedding_dot[index+1].forward(h, self.negative_sample_set[:, index]) for index in range(len(self.Embedding_dot)-1)]
+        negative_score = [self.Embedding_dot[index+1].forward(h, batch[:, index]) for index in range(len(self.Embedding_dot) - 1)]
         for index in range(len(self.Sigmoid_loss)-1):
             loss += self.Sigmoid_loss[index + 1].forward(negative_label, negative_score[index])
-        return loss
+        return sum(loss)
 
     def backward(self):
         dh = 0
