@@ -1,4 +1,4 @@
-from layers import MatMul, Softmax_Cross_entropy, WordEmbed, WordEmbedDot, SigmoidWithLoss
+from layers import MatMul, Softmax_Cross_entropy, WordEmbed, WordEmbedDot, SigmoidWithLoss, Repeat
 import cupy as cp
 
 
@@ -53,7 +53,7 @@ class CBow:
             self.weights += i.weights
             self.grads += i.grads
 
-    def forward(self, context, target, batch) -> cp.ndarray:
+    def forward(self, context, target, iters) -> cp.ndarray:
         result1 = self.layer1.forward(context[:, 0])
         result2 = self.layer2.forward(context[:, 1])
         h = 0.5*(result2+result1)
@@ -62,7 +62,9 @@ class CBow:
         correct_label = cp.ones(batch_size, dtype="int32")
         negative_label = cp.zeros(batch_size, dtype="int32")
         loss = self.Sigmoid_loss[0].forward(correct_label, score)
-        negative_score = [self.Embedding_dot[index+1].forward(h, batch[:, index]) for index in range(len(self.Embedding_dot) - 1)]
+        negative_score = [
+            self.Embedding_dot[index+1].forward(h, self.negative_sample_set[iters * batch_size:(iters + 1)*batch_size]\
+            [:, index]) for index in range(len(self.Embedding_dot) - 1)]
         for index in range(len(self.Sigmoid_loss)-1):
             loss += self.Sigmoid_loss[index + 1].forward(negative_label, negative_score[index])
         return sum(loss)
@@ -75,3 +77,38 @@ class CBow:
         dh /= 2
         self.layer1.backward(dh)
         self.layer2.backward(dh)
+
+
+class RNN:
+    def __init__(self, w_input, w_prev, b):
+        self.weights, self.grads = [w_input, w_prev, b], []
+        self.Matmul1 = MatMul(w_input)
+        self.Matmul2 = MatMul(w_prev)
+        self.cache = None
+
+    def forward(self, x, h_prev):
+        w_input, w_prev, b = self.weights
+        new_h = self.Matmul1.forward(h_prev)
+        new_x = self.Matmul2.forward(x)
+        first_total = new_x + new_h
+        # repeat = Repeat()
+        final = first_total + b
+        h_next = cp.tanh(final)
+        self.cache = (x, h_prev, h_next)
+        return h_next
+
+    def backward(self, dh_next):
+        x, h_prev, h_next = self.cache
+        dt = dh_next*(1 - cp.square(h_next))
+        db = cp.sum(dt, axis=0)
+        dx = self.Matmul1.backward(db)
+        dh_next = self.Matmul2.backward(db)
+        return dh_next, dx
+
+
+class TimeRNN:
+    def __init__(self, w_input, w_prev, b):
+        self.weights, self.grads = [w_input, w_prev, b], []
+        self.Matmul1 = MatMul(w_input)
+        self.Matmul2 = MatMul(w_prev)
+        self.cache = None
