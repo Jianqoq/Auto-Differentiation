@@ -1,5 +1,5 @@
 import cupy as cp
-from functions import cross_entropy_error
+from utils.activation_func import multi_cross_entropy_error
 
 
 class MatMul:
@@ -113,7 +113,7 @@ class Softmax_Cross_entropy:
         self.y = softmax(predict)
         if self.x.size == self.y.size:
             self.x = self.x.argmax(axis=1)
-        loss = cross_entropy_error(self.y, self.x)
+        loss = multi_cross_entropy_error(self.y, self.x)
         return loss
 
     def backward(self, dout=1):
@@ -168,6 +168,15 @@ class SigmoidWithLoss:
         self.x, self.y = None, None
 
     def forward(self, true, predict) -> cp.ndarray:
+        """
+        accept predict and then use Sigmoid to convert it to possibility
+
+        P = possibility, 1e-7 epsilon, label = 0 or 1\n
+
+        For binary classcification\n
+
+        loss=-(label*cp.log(P+1e-7)+(1-label)*cp.log(1-P+1e-7))
+        """
         y = Sigmoid().forward(predict)
         self.y = y
         self.x = true
@@ -176,3 +185,31 @@ class SigmoidWithLoss:
 
     def backward(self) -> cp.ndarray:
         return (self.y - self.x)/self.x.shape[0]
+
+
+class RNN:
+    def __init__(self, w_input, w_prev, b):
+        self.weights, self.grads = [w_input, w_prev, b], []
+        self.Matmul1 = MatMul(w_input)
+        self.Matmul2 = MatMul(w_prev)
+        self.cache = None
+
+    def forward(self, x, h_prev):
+        w_input, w_prev, b = self.weights
+        new_h = self.Matmul1.forward(h_prev)
+        new_x = self.Matmul2.forward(x)
+        first_total = new_x + new_h
+        # repeat = Repeat()
+        final = first_total + b
+        h_next = cp.tanh(final)
+        self.cache = (x, h_prev, h_next)
+        return h_next
+
+    def backward(self, dh_next):
+        x, h_prev, h_next = self.cache
+        dt = dh_next*(1 - cp.square(h_next))
+        db = cp.sum(dt, axis=0)
+        dx = self.Matmul1.backward(db)
+        dh_next = self.Matmul2.backward(db)
+        return dh_next, dx
+
