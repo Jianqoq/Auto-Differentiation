@@ -424,7 +424,3 @@ derivatives = {
         Multi: lambda func: func.get_grad(),
         X: lambda func: (1, func.result()),
     }
-
-print("导数：", get_grad(expe(3)/expe(3)))
-print("导数：", get_grad(sin(cot(3)/cot(2*X(3)))))
-print("导数：", get_grad(sin(Divide(cot(3), cot(Multi(2, X(3)))))))
