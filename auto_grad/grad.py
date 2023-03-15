@@ -358,9 +358,6 @@ class Prime:
         return derivatives[type(func)](func)
 
 
-all_function = [globals()[name] for name in dir() if callable(globals()[name])]
-
-
 def get_grads(x, y):
     prime1 = Prime(x)
     prime2 = Prime(y)
