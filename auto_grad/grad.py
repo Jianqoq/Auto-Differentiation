@@ -45,7 +45,7 @@ class Divide:
         return (grad1*result2 - result1*grad2)/cp.square(result2), result1/result2
 
 
-class expe:
+class exp:
     def __init__(self, x):
         self.x = x
 
@@ -66,13 +66,13 @@ class expe:
         return Divide(self, other)
 
 
-class exp:
-    def __init__(self, x, power):
-        self.x = power
-        self.val = get_value(x)
+class power:
+    def __init__(self, x, pow):
+        self.x = x
+        self.power = pow
 
     def result(self):
-        return cp.power(self.val, self.x)
+        return cp.power(get_value(self.x), self.power)
 
     def __add__(self, other):
         return Add(self, other)
@@ -93,8 +93,6 @@ class sin:
 
     def result(self):
         val = get_value(self.x)
-        if isinstance(val, Multi):
-            return val.get_grad()[1]
         return cp.sin(val)
 
     def __add__(self, other):
@@ -109,6 +107,9 @@ class sin:
     def __truediv__(self, other):
         return Divide(self, other)
 
+    def __pow__(self, power, modulo=None):
+        return
+
 
 class cos:
     def __init__(self, x):
@@ -116,8 +117,6 @@ class cos:
 
     def result(self):
         val = get_value(self.x)
-        if isinstance(val, Multi):
-            return cp.cos(val.get_grad()[1])
         return cp.cos(val)
 
     def __add__(self, other):
@@ -130,7 +129,7 @@ class cos:
         return Minus(self, other)
 
     def __truediv__(self, other):
-        return Divide(self, other).get_grad()
+        return Divide(self, other)
 
 
 class sec:
@@ -338,13 +337,11 @@ class X:
 
 
 class Prime:
-    def __init__(self, func, grad=1):
+    def __init__(self, func, grad=1.0):
         self.grad = grad
         self.result = self.prime(func)
-        self.operation = set()
 
     def prime(self, func):
-
         if isinstance(func, int or float or cp.ndarray):
             return 0, 0
         if isinstance(func.x, (Divide, Add, Multi, Minus)):
@@ -352,14 +349,12 @@ class Prime:
             self.grad *= grad
             func.x = actual_calculate
             func.grad = self.grad
-        elif func.x in derivatives.keys():
+        elif type(func.x) in derivatives.keys():
             prime = Prime(func.x, self.grad)
             grad, actual_calculate = prime.result
             func.x = actual_calculate
             self.grad = prime.grad
             self.grad *= grad
-        # if isinstance(func.x, (Divide, Add, Multi, Minus)):
-        #     return func.x.get_grad()
         return derivatives[type(func)](func)
 
 
@@ -407,11 +402,11 @@ def get_value(x):
 
 
 derivatives = {
-        expe: lambda func: (func.result(), func.result()),
+        exp: lambda func: (cp.exp(func.x), func.result()),
         sin: lambda func: (cos(func.x).result(), func.result()),
         tan: lambda func: (cp.square(sec(func.x).result()), func.result()),
         sec: lambda func: (func.result()*tan(func.x).result(), func.result()),
-        exp: lambda func: (cp.multiply(func.result(), ln(func.val).result()), func.result()),
+        power: lambda func: (func.power*(cp.power(func.x, (func.power - 1))), func.result()),
         ln: lambda func: (1/func.x, func.result()),
         arcsin: lambda func: (1/cp.sqrt(1-cp.square(func.x)), func.result()),
         arcos: lambda func: (-1/cp.sqrt(1 - cp.square(func.x)), func.result()),
@@ -424,3 +419,9 @@ derivatives = {
         Multi: lambda func: func.get_grad(),
         X: lambda func: (1, func.result()),
     }
+
+x = X(3)
+
+print("导数：", get_grad(power(sin(cos(x)/cos(x)), 3)))
+print("导数：", get_grad(sin(cot(x)/cot(2*x))))
+print("导数：", get_grad(exp((sin(ln(power(x, 2)))))))
