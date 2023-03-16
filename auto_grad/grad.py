@@ -8,10 +8,11 @@ class Add:
 
     def get_grad(self):
         grad1, grad2 = get_grads(self.x, self.y)
-        return grad1 + grad2
+        val1, val2 = get_values(self.x, self.y)
+        return grad1 + grad2, val1+val2
 
 
-class Minus:
+class Sub:
     def __init__(self, x, y):
         self.x = x
         self.y = y
@@ -28,10 +29,12 @@ class Multi:
 
     def get_grad(self):
         grad1, grad2 = get_grads(self.x, self.y)
-
         result1, result2 = get_values(self.x, self.y)
-
         return grad1*result2 + result1*grad2, result1*result2
+
+    def result(self):
+        result1, result2 = get_values(self.x, self.y)
+        return result1*result2
 
 
 class Divide:
@@ -60,7 +63,7 @@ class exp:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -81,7 +84,7 @@ class power:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -102,7 +105,7 @@ class sin:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -126,7 +129,7 @@ class cos:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -147,7 +150,7 @@ class sec:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -168,7 +171,7 @@ class arcsin:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -189,7 +192,7 @@ class arcos:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -210,7 +213,7 @@ class ln:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -231,7 +234,7 @@ class cot:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -252,7 +255,7 @@ class csc:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -273,7 +276,7 @@ class arcot:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -294,7 +297,7 @@ class tan:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -315,7 +318,7 @@ class arctan:
         return Multi(self, other)
 
     def __sub__(self, other):
-        return Minus(self, other)
+        return Sub(self, other)
 
     def __truediv__(self, other):
         return Divide(self, other)
@@ -344,7 +347,7 @@ class Prime:
     def prime(self, func):
         if isinstance(func, int or float or cp.ndarray):
             return 0, 0
-        if isinstance(func.x, (Divide, Add, Multi, Minus)):
+        if isinstance(func.x, (Divide, Add, Multi, Sub)):
             grad, actual_calculate = func.x.get_grad()
             self.grad *= grad
             func.x = actual_calculate
@@ -361,15 +364,12 @@ class Prime:
 def get_grads(x, y):
     prime1 = Prime(x)
     prime2 = Prime(y)
-
     grad1 = prime1.grad * prime1.result[0]
     grad2 = prime2.grad * prime2.result[0]
-
     return grad1, grad2
 
 
 def get_grad(x):
-
     prime1 = Prime(x)
     grad1 = prime1.grad * prime1.result[0]
     return grad1
@@ -414,11 +414,7 @@ derivatives = {
         cot: lambda func: (-cp.square(csc(func.x).result()), func.result()),
         Divide: lambda func: func.get_grad(),
         Multi: lambda func: func.get_grad(),
+        Add: lambda func: func.get_grad(),
+        Sub: lambda func: func.get_grad(),
         X: lambda func: (1, func.result()),
     }
-
-x = X(3)
-
-print("导数：", get_grad(power(sin(cos(x)/cos(x)), 3)))
-print("导数：", get_grad(sin(cot(x)/cot(2*x))))
-print("导数：", get_grad(exp((sin(ln(power(x, 2)))))))
