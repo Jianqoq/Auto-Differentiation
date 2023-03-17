@@ -1,5 +1,4 @@
 import cupy as cp
-import sympy
 from sympy import simplify
 
 
@@ -9,12 +8,39 @@ class Add:
         self.y = y
 
     def get_grad(self):
-        grad1, grad2 = get_grads(self.x, self.y)
-        val1, val2 = get_values(self.x, self.y)
-        return grad1 + grad2, val1+val2
+        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
+        result1, result2 = get_values(self.x, self.y)
+        return grad1 + grad2, result1 + result2, f"{str(expression1)} + {str(expression2)}"
 
     def __str__(self):
         return f"{str(self.x)}+{str(self.y)}"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
 
 class Sub:
@@ -23,11 +49,39 @@ class Sub:
         self.y = y
 
     def get_grad(self):
-        grad1, grad2 = get_grads(self.x, self.y)
-        return grad1 - grad2
+        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
+        result1, result2 = get_values(self.x, self.y)
+        return grad1 - grad2, result1 - result2, f"{str(expression1)} - {str(expression2)}"
 
     def __str__(self):
         return f"{str(self.x)}-{str(self.y)}"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
 
 class Multi:
@@ -69,6 +123,30 @@ class Multi:
     def __neg__(self):
         return Multi(-1, self)
 
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
 
 class Divide:
     def __init__(self, x, y):
@@ -76,12 +154,37 @@ class Divide:
         self.y = y
 
     def get_grad(self,):
-        grad1, grad2 = get_grads(self.x, self.y)
+        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
         result1, result2 = get_values(self.x, self.y)
-        return (grad1*result2 - result1*grad2)/cp.square(result2), result1/result2
+        tp = (int, float, cp.ndarray)
+        if isinstance(self.x, tp) and self.x < 0:
+            if isinstance(self.y, tp) and self.y < 0:
+                expression = f"({str(expression1)}*({str(self.y)}) - ({str(self.x)})*{str(expression2)})/square({str(self.y)})"
+            else:
+                expression = f"({str(expression1)}*{str(self.y)} - ({str(self.x)})*{str(expression2)})/square({str(self.y)})"
+        elif isinstance(self.y, tp) and self.y < 0:
+            expression = f"({str(expression1)}*({str(self.y)}) - {str(self.x)}*{str(expression2)})/square({str(self.y)})"
+        else:
+            expression = f"({str(expression1)}*{str(self.y)} - {str(self.x)}*{str(expression2)})/square({str(self.y)})"
+        return (grad1*result2 - result1*grad2)/cp.square(result2), result1/result2, expression
 
     def __str__(self):
         return f"{str(self.x)}/{str(self.y)}"
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
 
 
 class exp:
@@ -93,26 +196,35 @@ class exp:
         val = get_value(self.x)
         return cp.exp(val)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
     def __str__(self):
         return f"exp({str(self.x)})"
 
     def __neg__(self):
         return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
 
 class power:
@@ -124,26 +236,35 @@ class power:
     def result(self):
         return cp.power(get_value(self.x), self.power)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
     def __str__(self):
         return f"power({str(self.expression)}, {self.power})"
 
     def __neg__(self):
         return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
 
 class sin:
@@ -155,29 +276,38 @@ class sin:
         val = get_value(self.x)
         return cp.sin(val)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __pow__(self, power, modulo=None):
-        return
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
     def __str__(self):
         return f"sin({str(self.expression)})"
 
     def __neg__(self):
-        return Multi(-1, sin(self.x))
+        return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class cos:
@@ -189,26 +319,38 @@ class cos:
         val = get_value(self.x)
         return cp.cos(val)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
     def __str__(self):
         return f"cos({str(self.expression)})"
 
     def __neg__(self):
         return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class sec:
@@ -220,26 +362,38 @@ class sec:
         val = get_value(self.x)
         return 1/cp.cos(val)
 
+    def __str__(self):
+        return f"sec({str(self.expression)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
     def __add__(self, other):
         return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
 
     def __mul__(self, other):
         return Multi(self, other)
 
+    def __rmul__(self, other):
+        return Multi(other, self)
+
     def __sub__(self, other):
         return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
 
     def __truediv__(self, other):
         return Divide(self, other)
 
-    def __rmul__(self, other):
-        return Multi(other, self)
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
-    def __str__(self):
-        return f"sec({str(self.x)})"
-
-    def __neg__(self):
-        return Multi(-1, self)
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class arcsin:
@@ -251,26 +405,38 @@ class arcsin:
         val = get_value(self.x)
         return cp.arcsin(val)
 
+    def __str__(self):
+        return f"arcsin({str(self.expression)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
     def __add__(self, other):
         return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
 
     def __mul__(self, other):
         return Multi(self, other)
 
+    def __rmul__(self, other):
+        return Multi(other, self)
+
     def __sub__(self, other):
         return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
 
     def __truediv__(self, other):
         return Divide(self, other)
 
-    def __rmul__(self, other):
-        return Multi(other, self)
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
-    def __str__(self):
-        return f"arcsin({str(self.x)})"
-
-    def __neg__(self):
-        return Multi(-1, self)
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class arcos:
@@ -282,26 +448,38 @@ class arcos:
         val = get_value(self.x)
         return cp.arccos(val)
 
+    def __str__(self):
+        return f"arcos({str(self.expression)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
     def __add__(self, other):
         return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
 
     def __mul__(self, other):
         return Multi(self, other)
 
+    def __rmul__(self, other):
+        return Multi(other, self)
+
     def __sub__(self, other):
         return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
 
     def __truediv__(self, other):
         return Divide(self, other)
 
-    def __rmul__(self, other):
-        return Multi(other, self)
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
-    def __str__(self):
-        return f"arcos({str(self.x)})"
-
-    def __neg__(self):
-        return Multi(-1, self)
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class ln:
@@ -313,26 +491,38 @@ class ln:
         val = get_value(self.x)
         return cp.log(val)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
     def __str__(self):
         return f"ln({str(self.expression)})"
 
     def __neg__(self):
         return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class cot:
@@ -344,26 +534,38 @@ class cot:
         val = get_value(self.x)
         return 1/cp.tan(val)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
     def __str__(self):
         return f"cot({str(self.expression)})"
 
     def __neg__(self):
         return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class csc:
@@ -375,26 +577,38 @@ class csc:
         val = get_value(self.x)
         return 1/cp.sin(val)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
     def __str__(self):
         return f"csc({str(self.expression)})"
 
     def __neg__(self):
         return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class arcot:
@@ -406,26 +620,38 @@ class arcot:
         val = get_value(self.x)
         return cp.arctan(1/val)
 
+    def __str__(self):
+        return f"arcot({str(self.expression)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
     def __add__(self, other):
         return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
 
     def __mul__(self, other):
         return Multi(self, other)
 
+    def __rmul__(self, other):
+        return Multi(other, self)
+
     def __sub__(self, other):
         return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
 
     def __truediv__(self, other):
         return Divide(self, other)
 
-    def __rmul__(self, other):
-        return Multi(other, self)
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
-    def __str__(self):
-        return f"arcot({str(self.x)})"
-
-    def __neg__(self):
-        return Multi(-1, self)
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class tan:
@@ -437,26 +663,38 @@ class tan:
         val = get_value(self.x)
         return cp.tan(val)
 
+    def __str__(self):
+        return f"tan({str(self.expression)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
     def __add__(self, other):
         return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
 
     def __mul__(self, other):
         return Multi(self, other)
 
+    def __rmul__(self, other):
+        return Multi(other, self)
+
     def __sub__(self, other):
         return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
 
     def __truediv__(self, other):
         return Divide(self, other)
 
-    def __rmul__(self, other):
-        return Multi(other, self)
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
-    def __str__(self):
-        return f"tan({str(self.x)})"
-
-    def __neg__(self):
-        return Multi(-1, self)
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class arctan:
@@ -468,26 +706,38 @@ class arctan:
         val = get_value(self.x)
         return cp.arctan(val)
 
+    def __str__(self):
+        return f"arctan({str(self.expression)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
     def __add__(self, other):
         return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
 
     def __mul__(self, other):
         return Multi(self, other)
 
+    def __rmul__(self, other):
+        return Multi(other, self)
+
     def __sub__(self, other):
         return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
 
     def __truediv__(self, other):
         return Divide(self, other)
 
-    def __rmul__(self, other):
-        return Multi(other, self)
+    def __rtruediv__(self, other):
+        return Divide(other, self)
 
-    def __str__(self):
-        return f"arctan({str(self.x)})"
-
-    def __neg__(self):
-        return Multi(-1, self)
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class X:
@@ -499,21 +749,38 @@ class X:
         val = get_value(self.x)
         return val
 
+    def __str__(self):
+        return 'x'
+
+    def __neg__(self):
+        return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
     def __mul__(self, other):
         return Multi(self, other)
 
     def __rmul__(self, other):
         return Multi(other, self)
 
-    def __str__(self):
-        return 'x'
+    def __sub__(self, other):
+        return Sub(self, other)
 
-    def __neg__(self):
-        return Multi(-1, self)
-        # if type(self.x) not in keys:
-        #     return f"-x*({str(self.expression)})"
-        # self.x = -self.x
-        # return self.result()
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class square:
@@ -623,11 +890,11 @@ derivatives = {
                              str(func.power*(power(func.expression, (func.power - 1))))),
         ln: lambda func: (1/func.x, func.result(), f"1/{str(func.expression)}"),
         arcsin: lambda func: (1/cp.sqrt(1-cp.square(func.x)), func.result(),
-                              f"1/{str(sqrt(1 -square(func.expression)))})"),
+                              f"1/{str(sqrt(1 -square(func.expression)))}"),
         arcos: lambda func: (-1/cp.sqrt(1 - cp.square(func.x)), func.result(),
-                             f"-1/(1 + {str(sqrt(func.expression))})"),
+                             f"(-1/{str(sqrt(func.expression + 1))})"),
         arcot: lambda func: (-1/(1 + cp.square(func.x)), func.result(),
-                             f"-1/(1 + {str(square(func.expression))})"),
+                             f"(-1/(1 + {str(square(func.expression))}))"),
         arctan: lambda func: (1/(1 + cp.square(func.x)), func.result(),
                               f"1/(1 + {str(square(func.expression))})"),
         cos: lambda func: (-sin(func.x).result(), func.result(), str(-sin(func.expression))),
@@ -643,20 +910,4 @@ derivatives = {
 
 keys = list(derivatives.keys())
 
-w = X(-1)
-# print(-csc(w))
-grad, expression, grad_expression = get_grad(-cos(w))
-print(f"导数： {grad},\t表达式： {expression}, \t求导表达式： {grad_expression}\n")
-print(f"简化求导表达式： {simplify(grad_expression)}\n")
 
-# 验证
-# h2 = cos(csc(power(w, 3))).result()
-# h3 = -csc(power(w, 3)).result()
-# h4 = cot(power(w, 3)).result()
-# h5 = 3*power(w, 2).result()
-# h6 = cos(w).result()
-# e1 = sin(csc(power(w, 3))).result()
-# e2 = -sin(w).result()
-# print("导数：", h2*h3*h4*h5*h6 + e1*e2)
-
-# sympy.solve(-3*power(w, 2)*cos(w)*cos(cos(w)*csc(power(w, 3)))*cot(power(w, 3))*csc(power(w, 3)))
