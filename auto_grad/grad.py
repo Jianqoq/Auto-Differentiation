@@ -38,17 +38,36 @@ class Multi:
     def get_grad(self):
         grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
         result1, result2 = get_values(self.x, self.y)
-        return grad1*result2 + result1*grad2, result1*result2, f"{str(expression1)}*{str(self.y)} + {str(self.x)}*{str(expression2)}"
+        tp = (int, float, cp.ndarray)
+        if isinstance(self.x, tp) and self.x < 0:
+            if isinstance(self.y, tp) and self.y < 0:
+                expression = f"{str(expression1)}*({str(self.y)}) + ({str(self.x)})*{str(expression2)}"
+            else:
+                expression = f"{str(expression1)}*{str(self.y)} + ({str(self.x)})*{str(expression2)}"
+        elif isinstance(self.y, tp) and self.y < 0:
+            expression = f"{str(expression1)}*({str(self.y)}) + {str(self.x)}*{str(expression2)}"
+        else:
+            expression = f"{str(expression1)}*{str(self.y)} + {str(self.x)}*{str(expression2)}"
+        return grad1*result2 + result1*grad2, result1*result2, expression
 
     def result(self):
         result1, result2 = get_values(self.x, self.y)
         return result1*result2
 
     def __str__(self):
-        return f"{str(self.x)}*{str(self.y)}"
+        tp = (int, float, cp.ndarray)
+        if isinstance(self.x, tp) and self.x < 0:
+            if isinstance(self.y, tp) and self.y < 0:
+                return f"({str(self.x)})*({str(self.y)})"
+            else:
+                return f"({str(self.x)})*{str(self.y)}"
+        elif isinstance(self.y, tp) and self.y < 0:
+            return f"{str(self.x)}*({str(self.y)})"
+        else:
+            return f"{str(self.x)}*{str(self.y)}"
 
     def __neg__(self):
-        return -self.result()
+        return Multi(-1, self)
 
 
 class Divide:
@@ -93,9 +112,7 @@ class exp:
         return f"exp({str(self.x)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-exp({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class power:
@@ -126,9 +143,7 @@ class power:
         return f"power({str(self.expression)}, {self.power})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-power({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class sin:
@@ -162,9 +177,7 @@ class sin:
         return f"sin({str(self.expression)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-sin({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, sin(self.x))
 
 
 class cos:
@@ -195,9 +208,7 @@ class cos:
         return f"cos({str(self.expression)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-cos({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class sec:
@@ -228,9 +239,7 @@ class sec:
         return f"sec({str(self.x)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-sec({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class arcsin:
@@ -261,9 +270,7 @@ class arcsin:
         return f"arcsin({str(self.x)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"-arcsin({str(self.expression)})"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class arcos:
@@ -294,9 +301,7 @@ class arcos:
         return f"arcos({str(self.x)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-arcos({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class ln:
@@ -327,9 +332,7 @@ class ln:
         return f"ln({str(self.expression)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-ln({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class cot:
@@ -360,9 +363,7 @@ class cot:
         return f"cot({str(self.expression)})"
 
     def __neg__(self):
-        if self.x is not self.expression:
-            return -self.result()
-        return f"-cot({str(self.expression)})"
+        return Multi(-1, self)
 
 
 class csc:
@@ -393,9 +394,7 @@ class csc:
         return f"csc({str(self.expression)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"(-csc({str(self.expression)}))"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class arcot:
@@ -426,14 +425,13 @@ class arcot:
         return f"arcot({str(self.x)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"-arcot({str(self.expression)})"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class tan:
     def __init__(self, x):
         self.x = x
+        self.expression = x
 
     def result(self):
         val = get_value(self.x)
@@ -456,6 +454,9 @@ class tan:
 
     def __str__(self):
         return f"tan({str(self.x)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
 
 
 class arctan:
@@ -486,9 +487,7 @@ class arctan:
         return f"arctan({str(self.x)})"
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"-arctan({str(self.expression)})"
-        return -self.result()
+        return Multi(-1, self)
 
 
 class X:
@@ -510,9 +509,11 @@ class X:
         return 'x'
 
     def __neg__(self):
-        if self.x not in keys:
-            return f"-csc({str(self.expression)})"
-        return -self.result()
+        return Multi(-1, self)
+        # if type(self.x) not in keys:
+        #     return f"-x*({str(self.expression)})"
+        # self.x = -self.x
+        # return self.result()
 
 
 class square:
@@ -520,7 +521,7 @@ class square:
         self.expression = x
 
     def __neg__(self):
-        return f"-square({str(self.expression)})"
+        return f"(-square({str(self.expression)}))"
 
     def __str__(self):
         return f"square({str(self.expression)})"
@@ -535,7 +536,7 @@ class sqrt:
         self.expression = x
 
     def __neg__(self):
-        return f"-sqrt({str(self.expression)})"
+        return f"(-sqrt({str(self.expression)}))"
 
     def __str__(self):
         return f"sqrt({str(self.expression)})"
@@ -545,13 +546,13 @@ class Prime:
     def __init__(self, func, grad=1.0, head=True):
         self.grad = grad
         self.express = ""
-        # print("找到可求导变量:", func)
+        print("找到可求导变量:", func)
         self.result = self.prime(func)
-        # print("求导结果:", self.result[2])
+        print("求导结果:", self.result[2])
 
     def prime(self, func):
         if isinstance(func, int or float or cp.ndarray):
-            return 0, 0, f"*{str(func)}"
+            return 0, 0, f"0"
         elif isinstance(func, (Divide, Add, Multi, Sub)):
             grad, actual_calculate, expression = func.get_grad()
             self.grad = grad
@@ -642,8 +643,9 @@ derivatives = {
 
 keys = list(derivatives.keys())
 
-w = X(3)
-grad, expression, grad_expression = get_grad(sin(csc(power(w, 3))*cos(w))*cos(w))
+w = X(-1)
+# print(-csc(w))
+grad, expression, grad_expression = get_grad(-cos(w))
 print(f"导数： {grad},\t表达式： {expression}, \t求导表达式： {grad_expression}\n")
 print(f"简化求导表达式： {simplify(grad_expression)}\n")
 
