@@ -1,5 +1,7 @@
 import cupy as cp
 from sympy import simplify
+import sys
+import ast
 
 
 class Add:
@@ -11,6 +13,10 @@ class Add:
         grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
         result1, result2 = get_values(self.x, self.y)
         return grad1 + grad2, result1 + result2, f"{str(expression1)} + {str(expression2)}"
+
+    def result(self):
+        result1, result2 = get_values(self.x, self.y)
+        return result1*result2
 
     def __str__(self):
         return f"{str(self.x)}+{str(self.y)}"
@@ -52,6 +58,10 @@ class Sub:
         grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
         result1, result2 = get_values(self.x, self.y)
         return grad1 - grad2, result1 - result2, f"{str(expression1)} - {str(expression2)}"
+
+    def result(self):
+        result1, result2 = get_values(self.x, self.y)
+        return result1*result2
 
     def __str__(self):
         return f"{str(self.x)}-{str(self.y)}"
@@ -167,6 +177,10 @@ class Divide:
         else:
             expression = f"({str(expression1)}*{str(self.y)} - {str(self.x)}*{str(expression2)})/square({str(self.y)})"
         return (grad1*result2 - result1*grad2)/cp.square(result2), result1/result2, expression
+
+    def result(self):
+        result1, result2 = get_values(self.x, self.y)
+        return result1/result2
 
     def __str__(self):
         return f"{str(self.x)}/{str(self.y)}"
@@ -785,7 +799,12 @@ class X:
 
 class square:
     def __init__(self, x):
+        self.x = x
         self.expression = x
+
+    def result(self):
+        val = get_value(self.x)
+        return cp.square(val)
 
     def __neg__(self):
         return f"(-square({str(self.expression)}))"
@@ -800,13 +819,45 @@ class square:
 
 class sqrt:
     def __init__(self, x):
+        self.x = x
         self.expression = x
 
-    def __neg__(self):
-        return f"(-sqrt({str(self.expression)}))"
+    def result(self):
+        val = get_value(self.x)
+        return cp.sqrt(val)
 
     def __str__(self):
         return f"sqrt({str(self.expression)})"
+
+    def __neg__(self):
+        return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return power(self, p)
 
 
 class Prime:
@@ -829,6 +880,7 @@ class Prime:
             grad, actual_calculate, expression = func.x.get_grad()
             self.grad *= grad
             func.grad = self.grad
+            func.x = actual_calculate
             self.express = f"*{expression}"
         elif type(func.x) in derivatives.keys():
             prime = Prime(func.x, self.grad, False)
@@ -887,7 +939,7 @@ derivatives = {
         sec: lambda func: (func.result()*tan(func.x).result(), func.result(),
                            f"{str(str(sec(func.expression)))}*{str(tan(func.expression))}"),
         power: lambda func: (func.power*(cp.power(func.x, (func.power - 1))), func.result(),
-                             str(func.power*(power(func.expression, (func.power - 1))))),
+                             f"{func.power}*({func.expression}**({func.power - 1}))"),
         ln: lambda func: (1/func.x, func.result(), f"1/{str(func.expression)}"),
         arcsin: lambda func: (1/cp.sqrt(1-cp.square(func.x)), func.result(),
                               f"1/{str(sqrt(1 -square(func.expression)))}"),
@@ -906,6 +958,7 @@ derivatives = {
         Add: lambda func: func.get_grad(),
         Sub: lambda func: func.get_grad(),
         X: lambda func: (1, func.result(), "1"),
+        sqrt: lambda func: (1/2*cp.sqrt(func.x), func.result(), f"0.5*{func.expression}**(-0.5)"),
     }
 
 keys = list(derivatives.keys())
