@@ -244,17 +244,17 @@ class exp:
         return Divide(other, self)
 
 
-class power:
-    def __init__(self, x, pow):
+class pow:
+    def __init__(self, x, power):
         self.x = x
-        self.power = pow
+        self.power = power
         self.expression = x
 
     def result(self):
         return cp.power(get_value(self.x), self.power)
 
     def __str__(self):
-        return f"power({str(self.expression)}, {self.power})"
+        return f"pow({str(self.expression)}, {self.power})"
 
     def __neg__(self):
         return Multi(-1, self)
@@ -284,7 +284,7 @@ class power:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 class sin:
     def __init__(self, x):
@@ -326,7 +326,7 @@ class sin:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class cos:
@@ -369,7 +369,7 @@ class cos:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class sec:
@@ -412,7 +412,7 @@ class sec:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class arcsin:
@@ -455,7 +455,7 @@ class arcsin:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class arcos:
@@ -498,7 +498,7 @@ class arcos:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class ln:
@@ -541,7 +541,7 @@ class ln:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class cot:
@@ -584,7 +584,7 @@ class cot:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class csc:
@@ -627,7 +627,7 @@ class csc:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class arcot:
@@ -670,7 +670,7 @@ class arcot:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class tan:
@@ -713,7 +713,7 @@ class tan:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class arctan:
@@ -756,7 +756,7 @@ class arctan:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class X:
@@ -799,7 +799,7 @@ class X:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class square:
@@ -842,7 +842,7 @@ class square:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class sqrt:
@@ -885,7 +885,7 @@ class sqrt:
         return Divide(other, self)
 
     def __pow__(self, p, modulo=None):
-        return power(self, p)
+        return pow(self, p)
 
 
 class Prime:
@@ -1014,7 +1014,7 @@ derivatives = {
                            f"1/{str(square(sec(func.expression)))}"),
         sec: lambda func: (func.result()*tan(func.x).result(), func.result(),
                            f"{str(str(sec(func.expression)))}*{str(tan(func.expression))}"),
-        power: lambda func: (func.power*(cp.power(func.x, (func.power - 1))), func.result(),
+        pow: lambda func: (func.power*(cp.power(func.x, (func.power - 1))), func.result(),
                              f"{func.power}*({func.expression}**({func.power - 1}))"),
         ln: lambda func: (1/func.x, func.result(), f"1/{str(func.expression)}"),
         arcsin: lambda func: (1/cp.sqrt(1-cp.square(func.x)), func.result(),
@@ -1040,9 +1040,10 @@ derivatives = {
 
 keys = list(derivatives.keys())
 
-w = X(0)
-grad3, expression3, grad_expression = get_grad(2*arcsin(w)**(2*1)/sqrt(1-w**2)*1)
-print(f"导数： {grad3},\n表达式： {expression3}, \n求导表达式： {grad_expression}\n")
-express = str(simplify(grad_expression))
-print(f"简化求导表达式： {express}")
-get_result(express, w.result())
+if __name__ == "__main__":
+    w = X(0)
+    grad3, expression3, grad_expression = get_grad(2*arcsin(w)**(2*1)/sqrt(1-w**2)*1)
+    print(f"导数： {grad3},\n表达式： {expression3}, \n求导表达式： {grad_expression}\n")
+    express = str(simplify(grad_expression))
+    print(f"简化求导表达式： {express}")
+    get_result(express, w.result())
