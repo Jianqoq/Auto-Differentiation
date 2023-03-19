@@ -1,4 +1,4 @@
-import cupy as cp
+import numpy as np
 from sympy import simplify
 import ast
 
@@ -7,16 +7,17 @@ class Add:
     def __init__(self, x, y):
         self.x = x
         self.y = y
+        self.label = None
 
-    def get_grad(self):
-        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
+    def get_grad(self, label):
+        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label)
         result1, result2 = get_values(self.x, self.y)
-        return grad1 + grad2, result1 + result2, f"{str(expression1)} + {str(expression2)}"
+        return grad1 + grad2, result1 + result2, f"({str(expression1)}) + ({str(expression2)})"
 
     def result(self):
         # print("Add")
         result1, result2 = get_values(self.x, self.y)
-        return result1+result2
+        return np.add(result1, result2)
 
     def __str__(self):
         return f"{str(self.x)}+{str(self.y)}"
@@ -53,16 +54,17 @@ class Sub:
     def __init__(self, x, y):
         self.x = x
         self.y = y
+        self.label = None
 
-    def get_grad(self):
-        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
+    def get_grad(self, label):
+        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label)
         result1, result2 = get_values(self.x, self.y)
-        return grad1 - grad2, result1 - result2, f"{str(expression1)} - {str(expression2)}"
+        return grad1 - grad2, result1 - result2, f"({str(expression1)}) - ({str(expression2)})"
 
     def result(self):
         # print("Sub")
         result1, result2 = get_values(self.x, self.y)
-        return result1-result2
+        return np.subtract(result1, result2)
 
     def __str__(self):
         return f"{str(self.x)}-{str(self.y)}"
@@ -99,29 +101,30 @@ class Multi:
     def __init__(self, x, y):
         self.x = x
         self.y = y
+        self.label = None
 
-    def get_grad(self):
-        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
+    def get_grad(self, label, express=""):
+        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label=label, express=express)
         result1, result2 = get_values(self.x, self.y)
-        tp = (int, float, cp.ndarray)
+        tp = (int, float, np.ndarray)
         if isinstance(self.x, tp) and self.x < 0:
             if isinstance(self.y, tp) and self.y < 0:
-                expression = f"{str(expression1)}*({str(self.y)}) + ({str(self.x)})*{str(expression2)}"
+                expression = f"({str(expression1)})*({str(self.y)}) + ({str(self.x)})*({str(expression2)})"
             else:
-                expression = f"{str(expression1)}*{str(self.y)} + ({str(self.x)})*{str(expression2)}"
+                expression = f"({str(expression1)})*{str(self.y)} + ({str(self.x)})*({str(expression2)})"
         elif isinstance(self.y, tp) and self.y < 0:
-            expression = f"{str(expression1)}*({str(self.y)}) + {str(self.x)}*{str(expression2)}"
+            expression = f"({str(expression1)})*({str(self.y)}) + {str(self.x)}*({str(expression2)})"
         else:
-            expression = f"{str(expression1)}*{str(self.y)} + {str(self.x)}*{str(expression2)}"
+            expression = f"({str(expression1)})*{str(self.y)} + {str(self.x)}*({str(expression2)})"
         return grad1*result2 + result1*grad2, result1*result2, expression
 
     def result(self):
         # print("Multi")
         result1, result2 = get_values(self.x, self.y)
-        return result1*result2
+        return np.multiply(result1, result2)
 
     def __str__(self):
-        tp = (int, float, cp.ndarray)
+        tp = (int, float, np.ndarray)
         if isinstance(self.x, tp) and self.x < 0:
             if isinstance(self.y, tp) and self.y < 0:
                 return f"({str(self.x)})*({str(self.y)})"
@@ -140,9 +143,6 @@ class Multi:
 
     def __radd__(self, other):
         return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
 
     def __rmul__(self, other):
         return Multi(other, self)
@@ -164,21 +164,22 @@ class Divide:
     def __init__(self, x, y):
         self.x = x
         self.y = y
+        self.label = None
 
-    def get_grad(self,):
-        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y)
+    def get_grad(self, label, express=""):
+        grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label, express=express)
         result1, result2 = get_values(self.x, self.y)
-        tp = (int, float, cp.ndarray)
+        tp = (int, float, np.ndarray)
         if isinstance(self.x, tp) and self.x < 0:
             if isinstance(self.y, tp) and self.y < 0:
-                expression = f"({str(expression1)}*({str(self.y)}) - ({str(self.x)})*{str(expression2)})/square({str(self.y)})"
+                expression = f"({str(expression1)})*({str(self.y)}) - ({str(self.x)})*({str(expression2)})/square({str(self.y)})"
             else:
-                expression = f"({str(expression1)}*{str(self.y)} - ({str(self.x)})*{str(expression2)})/square({str(self.y)})"
+                expression = f"({str(expression1)})*{str(self.y)} - ({str(self.x)})*({str(expression2)})/square({str(self.y)})"
         elif isinstance(self.y, tp) and self.y < 0:
-            expression = f"({str(expression1)}*({str(self.y)}) - {str(self.x)}*{str(expression2)})/square({str(self.y)})"
+            expression = f"({str(expression1)})*({str(self.y)}) - {str(self.x)}*({str(expression2)})/square({str(self.y)})"
         else:
-            expression = f"({str(expression1)}*{str(self.y)} - {str(self.x)}*{str(expression2)})/square({str(self.y)})"
-        return (grad1*result2 - result1*grad2)/cp.square(result2), result1/result2, expression
+            expression = f"({str(expression1)})*{str(self.y)} - {str(self.x)}*({str(expression2)})/square({str(self.y)})"
+        return (grad1*result2 - result1*grad2)/np.square(result2), result1/result2, expression
 
     def result(self):
         # print("Divide")
@@ -211,7 +212,7 @@ class exp:
 
     def result(self):
         val = get_value(self.x)
-        return cp.exp(val)
+        return np.exp(val)
 
     def __str__(self):
         return f"exp({str(self.x)})"
@@ -251,7 +252,7 @@ class pow:
         self.expression = x
 
     def result(self):
-        return cp.power(get_value(self.x), self.power)
+        return np.power(get_value(self.x), self.power)
 
     def __str__(self):
         return f"pow({str(self.expression)}, {self.power})"
@@ -286,6 +287,7 @@ class pow:
     def __pow__(self, p, modulo=None):
         return pow(self, p)
 
+
 class sin:
     def __init__(self, x):
         self.x = x
@@ -293,7 +295,7 @@ class sin:
 
     def result(self):
         val = get_value(self.x)
-        return cp.sin(val)
+        return np.sin(val)
 
     def __str__(self):
         return f"sin({str(self.expression)})"
@@ -336,7 +338,7 @@ class cos:
 
     def result(self):
         val = get_value(self.x)
-        return cp.cos(val)
+        return np.cos(val)
 
     def __str__(self):
         return f"cos({str(self.expression)})"
@@ -379,7 +381,7 @@ class sec:
 
     def result(self):
         val = get_value(self.x)
-        return 1/cp.cos(val)
+        return 1/np.cos(val)
 
     def __str__(self):
         return f"sec({str(self.expression)})"
@@ -422,7 +424,7 @@ class arcsin:
 
     def result(self):
         val = get_value(self.x)
-        return cp.arcsin(val)
+        return np.arcsin(val)
 
     def __str__(self):
         return f"arcsin({str(self.expression)})"
@@ -465,7 +467,7 @@ class arcos:
 
     def result(self):
         val = get_value(self.x)
-        return cp.arccos(val)
+        return np.arccos(val)
 
     def __str__(self):
         return f"arcos({str(self.expression)})"
@@ -508,7 +510,7 @@ class ln:
 
     def result(self):
         val = get_value(self.x)
-        return cp.log(val)
+        return np.log(val)
 
     def __str__(self):
         return f"ln({str(self.expression)})"
@@ -551,7 +553,7 @@ class cot:
 
     def result(self):
         val = get_value(self.x)
-        return 1/cp.tan(val)
+        return 1/np.tan(val)
 
     def __str__(self):
         return f"cot({str(self.expression)})"
@@ -594,7 +596,7 @@ class csc:
 
     def result(self):
         val = get_value(self.x)
-        return 1/cp.sin(val)
+        return 1/np.sin(val)
 
     def __str__(self):
         return f"csc({str(self.expression)})"
@@ -637,7 +639,7 @@ class arcot:
 
     def result(self):
         val = get_value(self.x)
-        return cp.arctan(1/val)
+        return np.arctan(1/val)
 
     def __str__(self):
         return f"arcot({str(self.expression)})"
@@ -680,7 +682,7 @@ class tan:
 
     def result(self):
         val = get_value(self.x)
-        return cp.tan(val)
+        return np.tan(val)
 
     def __str__(self):
         return f"tan({str(self.expression)})"
@@ -723,7 +725,7 @@ class arctan:
 
     def result(self):
         val = get_value(self.x)
-        return cp.arctan(val)
+        return np.arctan(val)
 
     def __str__(self):
         return f"arctan({str(self.expression)})"
@@ -809,7 +811,7 @@ class square:
 
     def result(self):
         val = get_value(self.x)
-        return cp.square(val)
+        return np.square(val)
 
     def __str__(self):
         return f"square({str(self.expression)})"
@@ -852,7 +854,7 @@ class sqrt:
 
     def result(self):
         val = get_value(self.x)
-        return cp.sqrt(val)
+        return np.sqrt(val)
 
     def __str__(self):
         return f"sqrt({str(self.expression)})"
@@ -888,43 +890,103 @@ class sqrt:
         return pow(self, p)
 
 
+class Xsequence:
+    """
+    size: number of variables. [x1, x2, x3, x4 ... xn]
+    label: variable identity. "x" = x vector. "b" = b vector
+    """
+    def __init__(self, size, label='x'):
+        self.x = np.arange(0, size)
+        self.expression = size
+        self.label = label
+
+    def result(self):
+        return self.x
+
+    def __iter__(self):
+        return self.x
+
+    def __getitem__(self, item):
+        return self.x[item]
+
+    def __neg__(self):
+        return Multi(-1, self)
+
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __radd__(self, other):
+        return Add(other, self)
+
+    def __mul__(self, other):
+        return Multi(self, other)
+
+    def __rmul__(self, other):
+        return Multi(other, self)
+
+    def __sub__(self, other):
+        return Sub(self, other)
+
+    def __rsub__(self, other):
+        return Sub(other, self)
+
+    def __truediv__(self, other):
+        return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        return pow(self, p)
+
+    def __str__(self):
+        return self.label
+
+
 class Prime:
-    def __init__(self, func, grad=1.0, head=True):
+    def __init__(self, func, grad=1.0, label="x", express="", head=True):
         self.grad = grad
-        self.express = ""
+        self.express = express
+        self.label = label
         # print("找到可求导变量:", func)
         self.result = self.prime(func)
         # print("求导结果:", self.result[2])
+        # print(self.result[2])
 
     def prime(self, func):
-        if isinstance(func, (int, float, cp.ndarray)):
+        if isinstance(func, (int, float, np.ndarray)):
             return 0, 0, f"0"
+        elif isinstance(func, Xsequence) and func.label != self.label:
+            return 0, 0, "0"
         elif isinstance(func, (Divide, Add, Multi, Sub)):
-            grad, actual_calculate, expression = func.get_grad()
+            grad, actual_calculate, expression = func.get_grad(self.label, self.express)
             self.grad = grad
-            self.express = f"*{expression}"
+            self.express = expression
+            # print(expression)
             return 1, 1, expression
         elif isinstance(func.x, (Divide, Add, Multi, Sub)):
-            grad, actual_calculate, expression = func.x.get_grad()
+            grad, actual_calculate, expression = func.x.get_grad(self.label, self.express)
             self.grad *= grad
             func.grad = self.grad
+            self.express = f"({self.express})*{expression}"
+            func.expression = f"({func.expression})*{self.express}"
+            # print(expression)
             func.x = actual_calculate
-            self.express = f"*{expression}"
         elif type(func.x) in derivatives.keys():
-            prime = Prime(func.x, self.grad, False)
+            prime = Prime(func.x, self.grad, label=self.label, express=self.express)
             grad, actual_calculate, expression = prime.result
             func.x = actual_calculate
-            self.express = f"*{expression}"
             self.grad = prime.grad
             self.grad *= grad
-        result = derivatives[type(func)](func)
-        express = result[2] + f"{self.express}"
-        return result[0], result[1], express
+            self.express = prime.express
+            self.express = f"({self.express})*{expression}"
+            # print(expression)
+        return derivatives[type(func)](func)
 
 
-def get_grads(x, y):
-    prime1 = Prime(x, head=False)
-    prime2 = Prime(y, head=False)
+def get_grads(x, y, label, express=""):
+    prime1 = Prime(x, label=label, express=express)
+    prime2 = Prime(y, label=label, express=express)
     grad1 = prime1.grad * prime1.result[0]
     grad2 = prime2.grad * prime2.result[0]
     return grad1, grad2, prime1.result[2], prime2.result[2]
@@ -992,7 +1054,7 @@ class Result:
         # print("结果:", self.result)
 
     def get_result(self, func):
-        if isinstance(func, (int, float, cp.ndarray)):
+        if isinstance(func, (int, float, np.ndarray)):
             return func
         elif isinstance(func, (Divide, Add, Multi, Sub)):
             actual_calculate = func.result()
@@ -1008,42 +1070,48 @@ class Result:
 
 
 derivatives = {
-        exp: lambda func: (cp.exp(func.x), func.result(), str(exp(func.expression))),
+        exp: lambda func: (np.exp(func.x), func.result(), str(exp(func.expression))),
         sin: lambda func: (cos(func.x).result(), func.result(), str(cos(func.expression))),
-        tan: lambda func: (cp.square(sec(func.x).result()), func.result(),
+        tan: lambda func: (np.square(sec(func.x).result()), func.result(),
                            f"1/{str(square(sec(func.expression)))}"),
         sec: lambda func: (func.result()*tan(func.x).result(), func.result(),
                            f"{str(str(sec(func.expression)))}*{str(tan(func.expression))}"),
-        pow: lambda func: (func.power*(cp.power(func.x, (func.power - 1))), func.result(),
-                             f"{func.power}*({func.expression}**({func.power - 1}))"),
+        pow: lambda func: (func.power*(np.power(func.x, (func.power - 1))), func.result(),
+                             f"{func.power}*pow({func.expression}, {func.power - 1})"),
         ln: lambda func: (1/func.x, func.result(), f"1/{str(func.expression)}"),
-        arcsin: lambda func: (1/cp.sqrt(1-cp.square(func.x)), func.result(),
+        arcsin: lambda func: (1/np.sqrt(1-np.square(func.x)), func.result(),
                               f"1/{str(sqrt(1 -square(func.expression)))}"),
-        arcos: lambda func: (-1/cp.sqrt(1 - cp.square(func.x)), func.result(),
+        arcos: lambda func: (-1/np.sqrt(1 - np.square(func.x)), func.result(),
                              f"(-1/{str(sqrt(func.expression + 1))})"),
-        arcot: lambda func: (-1/(1 + cp.square(func.x)), func.result(),
+        arcot: lambda func: (-1/(1 + np.square(func.x)), func.result(),
                              f"(-1/(1 + {str(square(func.expression))}))"),
-        arctan: lambda func: (1/(1 + cp.square(func.x)), func.result(),
+        arctan: lambda func: (1/(1 + np.square(func.x)), func.result(),
                               f"1/(1 + {str(square(func.expression))})"),
         cos: lambda func: (-sin(func.x).result(), func.result(), str(-sin(func.expression))),
         csc: lambda func: (-func.result()*cot(func.x).result(), func.result(),
                            str(-func*cot(func.expression))),
-        cot: lambda func: (-cp.square(csc(func.x).result()), func.result(), str(square(csc(func.expression)))),
+        cot: lambda func: (-np.square(csc(func.x).result()), func.result(), str(square(csc(func.expression)))),
         Divide: lambda func: func.get_grad(),
         Multi: lambda func: func.get_grad(),
         Add: lambda func: func.get_grad(),
         Sub: lambda func: func.get_grad(),
         X: lambda func: (1, func.result(), "1"),
-        sqrt: lambda func: (1/2*cp.sqrt(func.x), func.result(), f"0.5*{func.expression}**(-0.5)"),
+        sqrt: lambda func: (1/2*np.sqrt(func.x), func.result(), f"0.5*{func.expression}**(-0.5)"),
         square: lambda func: (2*func.x, func.result(), f"2*{func.expression}"),
+        Xsequence: lambda func: (1, func.result(), "x")
     }
 
 keys = list(derivatives.keys())
 
+
 if __name__ == "__main__":
-    w = X(0)
-    grad3, expression3, grad_expression = get_grad(2*arcsin(w)**(2*1)/sqrt(1-w**2)*1)
-    print(f"导数： {grad3},\n表达式： {expression3}, \n求导表达式： {grad_expression}\n")
+    w = X(5)
+    print(sin(w)*pow(w, 2)*cos(w))
+    grad3, expression3, grad_expression = get_grad(sin(w)*pow(w, 2)*cos(w))
+    print(f"导数： {grad3}\n表达式： {expression3} \n求导表达式： {grad_expression}\n")
     express = str(simplify(grad_expression))
     print(f"简化求导表达式： {express}")
     get_result(express, w.result())
+    # print(sin(w)*pow(w, 2)*cos(w))
+    # get_result('cos(x)*1*pow(x, 2) + sin(x)*2*(x**(1))*1*cos(x) + sin(x)*pow(x, 2)*(-1)*sin(x)*1', w.result())
+
