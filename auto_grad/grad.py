@@ -1063,7 +1063,6 @@ class Prime:
             print("求导结果:", self.result[2])
 
     def prime(self, func):
-        print(func, self.label, func.label)
         if isinstance(func, (int, float, np.ndarray)):
             return 0, 0, "0"
         elif isinstance(func, Xsequence) and self.label is not None and func.label != self.label:
@@ -1233,7 +1232,7 @@ derivatives = {
         Multi: lambda func, express: func.get_grad(),
         Add: lambda func, express: func.get_grad(),
         Sub: lambda func, express: func.get_grad(),
-        X: lambda func, express: (1, func.result(), express),
+        X: lambda func, express: (func.grad, func.result(), express),
         sqrt: lambda func, express: (1/2*np.sqrt(func.x), func.result(), f"(0.5*{func.expression}**(-0.5))*{express}"),
         square: lambda func, express: (2*func.x, func.result(), f"(2*{func.expression})*{express}"),
         Xsequence: lambda func, express: (1, func.result(), "x")
@@ -1256,5 +1255,5 @@ if __name__ == "__main__":
     print(f"导数： {grad3}\n表达式： {expression3} \n求导表达式： {grad_expression}\n")
     express = str(simplify(grad_expression))
     print(f"简化求导表达式： {express}")
-    get_result(str(q + 3))
+    get_result(express)
 
