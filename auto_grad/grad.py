@@ -4,25 +4,22 @@ import ast
 from torch import tensor
 
 
-class Matrix:
-    """
-    size: number of variables. [x1, x2, x3, x4 ... xn]
-    label: variable identity. "x" = x vector. "b" = b vector
-    """
-    def __init__(self, data: np.ndarray, label='x'):
-        self.x = np.array(data)
-        self.expression = label
-        self.label = label
-        self.T = np.transpose(self.x)
+class Function:
+    def __init__(self):
+        self.grad = None
+        self.x = None
 
     def result(self):
-        return self.x
+        """
+        require to implement by yourself
+        """
+        pass
 
-    def __iter__(self):
-        return self.x
-
-    def __getitem__(self, item):
-        return self.x[item]
+    def get_grad(self, grad):
+        """
+        require to implement by yourself
+        """
+        pass
 
     def __neg__(self):
         return Multi(-1, self)
@@ -34,10 +31,10 @@ class Matrix:
         return Add(other, self)
 
     def __mul__(self, other):
-        return Matmul(self, other)
+        return Multi(self, other)
 
     def __rmul__(self, other):
-        return Matmul(other, self)
+        return Multi(other, self)
 
     def __sub__(self, other):
         return Sub(self, other)
@@ -53,6 +50,28 @@ class Matrix:
 
     def __pow__(self, p, modulo=None):
         return pow(self, p)
+    
+    
+class Matrix(Function):
+    """
+    size: number of variables. [x1, x2, x3, x4 ... xn]
+    label: variable identity. "x" = x vector. "b" = b vector
+    """
+    def __init__(self, data: np.ndarray, label='x'):
+        super(Matrix, self).__init__()
+        self.x = np.array(data)
+        self.expression = label
+        self.label = label
+        self.T = np.transpose(self.x)
+
+    def result(self):
+        return self.x
+
+    def __iter__(self):
+        return self.x
+
+    def __getitem__(self, item):
+        return self.x[item]
 
     def __str__(self):
         return self.label
@@ -67,11 +86,9 @@ class Matmul:
         self.x = x
         self.y = y
         self.label = None
-        self.grad = None
 
-    def get_grad(self, express="", debug=False):
+    def get_grad(self):
         grad = self.y.T
-        # grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label, express=express, debug=debug)
         result1, result2 = get_values(self.x, self.y)
         self.grad = grad
         return grad, result1@result2, f"{str(self.x)}*{str(self.y)}.T"
@@ -80,12 +97,12 @@ class Matmul:
         return self.x@self.y
 
 
-class Add:
+class Add(Function):
     def __init__(self, x, y):
+        super(Add, self).__init__()
         self.x = x
         self.y = y
         self.label = None
-        self.grad = None
 
     def get_grad(self, label, express="", debug=False):
         grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label, express=express, debug=debug)
@@ -94,47 +111,19 @@ class Add:
         return grad1 + grad2, result1 + result2, f"({str(expression1)}) + ({str(expression2)})"
 
     def result(self):
-        # print("Add")
         result1, result2 = get_values(self.x, self.y)
         return np.add(result1, result2)
 
     def __str__(self):
         return f"({str(self.x)}+{str(self.y)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-
-class Sub:
+class Sub(Function):
     def __init__(self, x, y):
+        super(Sub, self).__init__()
         self.x = x
         self.y = y
         self.label = None
-        self.grad = None
 
     def get_grad(self, label, express="", debug=False):
         grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label, express=express, debug=debug)
@@ -143,47 +132,19 @@ class Sub:
         return self.grad, result1 - result2, f"({str(expression1)}) - ({str(expression2)})"
 
     def result(self):
-        # print("Sub")
         result1, result2 = get_values(self.x, self.y)
         return np.subtract(result1, result2)
 
     def __str__(self):
         return f"{str(self.x)}-{str(self.y)}"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-
-class Multi:
+class Multi(Function):
     def __init__(self, x, y):
+        super(Multi, self).__init__()
         self.x = x
         self.y = y
         self.label = None
-        self.grad = None
 
     def get_grad(self, label, express="", debug=False):
         grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label=label, express=express, debug=debug)
@@ -202,7 +163,6 @@ class Multi:
         return self.grad, result1*result2, expression
 
     def result(self):
-        # print("Multi")
         result1, result2 = get_values(self.x, self.y)
         return np.multiply(result1, result2)
 
@@ -218,40 +178,13 @@ class Multi:
         else:
             return f"{str(self.x)}*{str(self.y)}"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-
-class Divide:
+class Divide(Function):
     def __init__(self, x, y):
+        super(Divide, self).__init__()
         self.x = x
         self.y = y
         self.label = None
-        self.grad = None
 
     def get_grad(self, label, express="", debug=False):
         grad1, grad2, expression1, expression2 = get_grads(self.x, self.y, label, express=express, debug=debug)
@@ -270,34 +203,18 @@ class Divide:
         return self.grad, result1/result2, expression
 
     def result(self):
-        # print("Divide")
         result1, result2 = get_values(self.x, self.y)
         return result1/result2
 
     def __str__(self):
         return f"{str(self.x)}/{str(self.y)}"
 
-    def __add__(self, other):
-        return Add(self, other)
 
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-
-class exp:
+class exp(Function):
     def __init__(self, x):
+        super(exp, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -306,40 +223,13 @@ class exp:
     def __str__(self):
         return f"exp({str(self.x)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-
-class pow:
+class pow(Function):
     def __init__(self, x, power):
+        super(pow, self).__init__()
         self.x = x
         self.power = power
         self.expression = x
-        self.grad = None
 
     def result(self):
         return np.power(get_value(self.x), self.power)
@@ -347,42 +237,12 @@ class pow:
     def __str__(self):
         return f"pow({str(self.expression)}, {self.power})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class sin:
+class sin(Function):
     def __init__(self, x):
+        super(sin, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -391,42 +251,12 @@ class sin:
     def __str__(self):
         return f"sin({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class cos:
+class cos(Function):
     def __init__(self, x):
+        super(cos, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -435,42 +265,12 @@ class cos:
     def __str__(self):
         return f"cos({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class sec:
+class sec(Function):
     def __init__(self, x):
+        super(sec, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -479,42 +279,12 @@ class sec:
     def __str__(self):
         return f"sec({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class arcsin:
+class arcsin(Function):
     def __init__(self, x):
+        super(arcsin, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -523,42 +293,12 @@ class arcsin:
     def __str__(self):
         return f"arcsin({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class arcos:
+class arcos(Function):
     def __init__(self, x):
+        super(arcos, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -567,42 +307,12 @@ class arcos:
     def __str__(self):
         return f"arcos({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class ln:
+class ln(Function):
     def __init__(self, x):
+        super(ln, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -611,42 +321,12 @@ class ln:
     def __str__(self):
         return f"ln({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class cot:
+class cot(Function):
     def __init__(self, x):
+        super(cot, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -655,42 +335,12 @@ class cot:
     def __str__(self):
         return f"cot({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class csc:
+class csc(Function):
     def __init__(self, x):
+        super(csc, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -699,42 +349,12 @@ class csc:
     def __str__(self):
         return f"csc({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class arcot:
+class arcot(Function):
     def __init__(self, x):
+        super(arcot, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -743,42 +363,12 @@ class arcot:
     def __str__(self):
         return f"arcot({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class tan:
+class tan(Function):
     def __init__(self, x):
+        super(tan, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -786,43 +376,13 @@ class tan:
 
     def __str__(self):
         return f"tan({str(self.expression)})"
+    
 
-    def __neg__(self):
-        return Multi(-1, self)
-
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class arctan:
+class arctan(Function):
     def __init__(self, x):
+        super(arctan, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -831,42 +391,12 @@ class arctan:
     def __str__(self):
         return f"arctan({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class X:
+class X(Function):
     def __init__(self, x, label="x"):
+        super(X, self).__init__()
         self.x = np.array(x)
         self.expression = x
-        self.grad = None
         self.label = label
 
     def result(self):
@@ -876,42 +406,12 @@ class X:
     def __str__(self):
         return self.label
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class square:
+class square(Function):
     def __init__(self, x):
+        super(square, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -920,42 +420,12 @@ class square:
     def __str__(self):
         return f"square({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class sqrt:
+class sqrt(Function):
     def __init__(self, x):
+        super(sqrt, self).__init__()
         self.x = x
         self.expression = x
-        self.grad = None
 
     def result(self):
         val = get_value(self.x)
@@ -964,43 +434,14 @@ class sqrt:
     def __str__(self):
         return f"sqrt({str(self.expression)})"
 
-    def __neg__(self):
-        return Multi(-1, self)
 
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
-
-class Xsequence:
+class Xsequence(Function):
     """
     size: number of variables. [x1, x2, x3, x4 ... xn]
     label: variable identity. "x" = x vector. "b" = b vector
     """
     def __init__(self, size, label='x'):
+        super(Xsequence, self).__init__()
         self.x = np.arange(0, size).reshape(size, 1)
         self.expression = size
         self.label = label
@@ -1015,36 +456,6 @@ class Xsequence:
     def __getitem__(self, item):
         return self.x[item]
 
-    def __neg__(self):
-        return Multi(-1, self)
-
-    def __add__(self, other):
-        return Add(self, other)
-
-    def __radd__(self, other):
-        return Add(other, self)
-
-    def __mul__(self, other):
-        return Multi(self, other)
-
-    def __rmul__(self, other):
-        return Multi(other, self)
-
-    def __sub__(self, other):
-        return Sub(self, other)
-
-    def __rsub__(self, other):
-        return Sub(other, self)
-
-    def __truediv__(self, other):
-        return Divide(self, other)
-
-    def __rtruediv__(self, other):
-        return Divide(other, self)
-
-    def __pow__(self, p, modulo=None):
-        return pow(self, p)
-
     def __str__(self):
         return self.label
 
@@ -1056,7 +467,7 @@ class Prime:
         self.label = label
         self.debug = debug
         if debug:
-            print("找到可求导变量:", func)
+            print("找到可求导变量:", func, end=" ")
         self.result = self.prime(func)
         self.express = self.result[2]
         if debug:
@@ -1079,7 +490,6 @@ class Prime:
             grad, actual_calculate, expression = func.get_grad(label=self.label, express=self.express, debug=self.debug)
             self.grad = grad
             self.express = expression
-            # print(expression)
             return 1, 1, expression
         elif isinstance(func.x, (Divide, Add, Multi, Sub)):
             grad, actual_calculate, expression = func.x.get_grad(label=self.label, express=self.express, debug=self.debug)
@@ -1185,10 +595,8 @@ def get_result(string):
 
 
 class Result:
-    def __init__(self, func, head=True):
-        # print("找到可求导变量:", type(func))
+    def __init__(self, func):
         self.result = self.get_result(func)
-        # print("结果:", self.result)
 
     def get_result(self, func):
         if isinstance(func, (int, float, np.ndarray)):
@@ -1244,13 +652,13 @@ keys = list(derivatives.keys())
 if __name__ == "__main__":
     a = tensor(2., requires_grad=True)
     b = tensor(1., requires_grad=True)
-    w = X(2., "w")
+    w = X(3., "w")
     q = X(1., "q")
     y = (a + a*b)*(b + 3)
     y.backward()
     print(a.grad, b.grad)
     kl = w+q
-    po = w/q
+    po = sin(w*q)*w
     grad3, expression3, grad_expression = get_grad(po, "w", debug=True)
     print(f"导数： {grad3}\n表达式： {expression3} \n求导表达式： {grad_expression}\n")
     express = str(simplify(grad_expression))
