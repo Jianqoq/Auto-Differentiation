@@ -22,7 +22,7 @@ class Function:
         """
         pass
 
-    def gradient(self, debug=False):
+    def gradient(self, grad:  list | float | np.ndarray | None = None, debug=False):
         Prime(self, debug=debug)
 
     def __str__(self):
@@ -75,10 +75,17 @@ class Matrix(Function):
         self.x = np.array(data)
         self.expression = label
         self.label = label
+        self.shape = self.x.shape
         self.T = np.transpose(self.x)
 
     def result(self):
         return self.x
+
+    def __mul__(self, other):
+        return hadamardproduct(self, other)
+
+    def __rmul__(self, other):
+        return hadamardproduct(other, self)
 
     def __iter__(self):
         return self.x
@@ -97,12 +104,147 @@ class Matmul(Function):
         self.y = y
 
     def get_grad(self, grad):
-        grad = grad*self.y.T
-        self.grad = grad
-        return grad
+        grad1 = grad@self.y.T
+        grad2 = self.x.T@grad
+        expression1, expression2 = f"{grad}@{self.y.T}", f"{self.x.T}@{grad}"
+        return grad1, grad2, expression1, expression2
 
     def result(self):
         return self.x@self.y
+
+    def gradient(self, grad: list | None = None, debug=False):
+        """
+        :param grad: d(loss)/d(self)
+        :return: (d(loss)/d(self))@self.y.T, self.x.T@(d(loss)/d(self))
+        """
+        assert isinstance(grad, list), "Provide list to calculate the grad"
+        grad = np.array(grad)
+        shape1 = self.x.T.shape
+        shape = grad.shape
+        shape2 = self.y.T.shape
+        assert shape1[1] == shape[0], f"Matrix1 {shape1} != {shape} param"
+        assert shape2[0] == shape[1], f"Matrix2 {shape2} != {shape} param"
+        Prime(self, grad=grad, debug=debug)
+
+
+class hadamardproduct(Function):
+    def __init__(self, x: Matrix, y: Matrix):
+        super().__init__()
+        assert x.shape == y.shape, "both Matrix shape have to be the same"
+        self.x = x
+        self.y = y
+
+    def get_grad(self, grad):
+        assert grad.shape == self.x.shape, f"grad shape should be {self.x.shape}"
+        val1, val2 = get_values(self.x, self.y)
+        grad1 = val2*grad
+        grad2 = grad*val1
+        expression1, expression2 = f"{self.x}*{grad}", f"{grad}*{self.y}"
+        return grad1, grad2, expression1, expression2
+
+    def result(self):
+        return self.x*self.y
+
+    def gradient(self, grad: list | None = None, debug=False):
+        """
+        :param grad: element wise product.
+        :return:
+        """
+        assert isinstance(grad, list), "Provide list to calculate the grad"
+        grad = np.array(grad)
+        shape1 = self.x.shape
+        shape = grad.shape
+        shape2 = self.y.shape
+        assert shape1 == shape, f"Matrix1 {shape1} != {shape} param"
+        assert shape2 == shape, f"Matrix2 {shape2} != {shape} param"
+        Prime(self, grad=grad, debug=debug)
+
+
+class transpose(Function):
+    def __init__(self, x):
+        super().__init__()
+        self.x = x
+
+    def get_grad(self, grad):
+        return grad
+
+    def result(self):
+        return self.x.T
+
+    def gradient(self, grad: list | None = None, debug=False):
+        """
+        grad has to have the same shape as self.x
+
+        grad: trace((d(loss)/d(self)).T*d(self.x.T))  --> trace(d(loss)/d(self)*d(self.x))
+
+        :return: d(loss)/d(self)
+        """
+        assert isinstance(grad, list), "Provide list to calculate the grad"
+        grad = np.array(grad)
+        shape1 = self.x.T.shape
+        shape = grad.shape
+        assert shape1 == shape, f"Matrix1 {shape1} != {shape} param"
+        Prime(self, grad=grad, debug=debug)
+
+
+class trace(Function):
+    def __init__(self, x):
+        super().__init__()
+        self.x = x
+
+    def get_grad(self, grad):
+        val = get_value(self.x)
+        assert val.shape[-2] == val.shape[-1], "input has to be square matrix"
+        grad = grad*np.identity(val.shape[0])
+        return grad
+
+    def result(self):
+        x = self.x
+        if isinstance(self.x, Matrix):
+            x = self.x.result()
+        return np.trace(x)
+
+    def gradient(self, grad=1.0, debug=False):
+        """
+        grad has to have the same shape as self.x
+
+        grad: trace((d(loss)/d(self)).T*d(self.x.T))  --> trace(d(loss)/d(self)*d(self.x))
+
+        :return: d(loss)/d(self)
+        """
+        assert isinstance(grad, (float, np.ndarray)), "Provide list to calculate the grad"
+        Prime(self, grad=grad, debug=debug)
+
+
+class inv(Function):
+    def __init__(self, x):
+        super().__init__()
+        self.x = x
+
+    def get_grad(self, grad):
+        val = get_value(self.x)
+        assert val.shape == grad.shape
+        temp = np.linalg.inv(val)
+        grad = np.transpose(temp@np.transpose(grad)@(-temp))  # transpose??
+        return grad
+
+    def result(self):
+        x = self.x
+        if isinstance(self.x, Matrix):
+            x = self.x.result()
+        return np.invert(x)
+
+    def gradient(self, grad=1.0, debug=False):
+        """
+        grad has to have the same shape as self.x
+
+        grad: trace((d(loss)/d(self)).T*d(self.x.T))  --> trace(d(loss)/d(self)*d(self.x))
+
+        :return: d(loss)/d(self)
+        """
+        assert isinstance(grad, list), "Provide list to calculate the grad"
+        grad = np.array(grad)
+        Prime(self, grad=grad, debug=debug)
 
 
 class Add:
@@ -231,6 +373,19 @@ class pow(Function):
 
     def __str__(self):
         return f"pow({str(self.expression)}, {self.power})"
+
+    def gradient(self, grad=None, debug=False):
+        """
+        grad has to have the same shape as self.x
+
+        grad: trace((d(loss)/d(self)).T*d(self.x.T))  --> trace(d(loss)/d(self)*d(self.x))
+
+        :return: d(loss)/d(self)
+        """
+        if grad is None:
+            grad = 1.0
+        grad = np.array(grad)
+        Prime(self, grad=grad, debug=debug)
 
 
 class sin(Function):
@@ -500,7 +655,7 @@ class sqrt:
 
 
 class Prime:
-    def __init__(self, func, grad=1.0, label="x", express="", debug=False):
+    def __init__(self, func, grad=np.array(1.0), label="x", express="", debug=False):
         self.grad = grad
         self.express = express
         self.label = label
@@ -514,11 +669,14 @@ class Prime:
             if self.debug:
                 print("Branch 1(int, float, np.ndarray):", func)
             return 0, 0, "0"
-        elif isinstance(func, X):
+        elif isinstance(func, (X, Matrix)):
             if self.debug:
                 print("Branch 2(X):", func)
-            func.grad += self.grad
-        elif isinstance(func, (Divide, Add, Multi, Sub)):
+            if func.grad is None:
+                func.grad = self.grad
+            else:
+                func.grad += self.grad
+        elif isinstance(func, (Divide, Add, Multi, Sub, Matmul, hadamardproduct)):
             if self.debug:
                 print("Branch 3(Divide, Add, Multi, Sub):", func)
             grad1, grad2, expression1, expression2 = func.get_grad(self.grad)
@@ -634,20 +792,18 @@ class Result:
 
 
 derivatives = (exp, sin, tan, sec, pow, ln, arcsin, arcos, arcot, arctan, cos, csc, cot, Divide, Multi, Add, Sub,
-               X, sqrt, square, Matmul)
+               X, sqrt, square, transpose, trace, inv)
 
 
 if __name__ == "__main__":
-    # a = tensor(1., requires_grad=True)
-    # b = tensor([[1.], [2.], [3.]], requires_grad=True)
-    # y = a@b
-    # y.backward()
-    # print(a.grad)
-    # w = Matrix(1.)
-    # q = Matrix([[1.], [2.], [3.]])
-    p = X(3)
-    o = X(1)
-    po = sin(p*o)
-    po.gradient()
-    print(p.grad, o.grad)
+    b = tensor([[1., 2., 3.], [2., 5., 3.], [6., 2., 3.]], requires_grad=True)
+    c = tensor([[1., 2., 3.], [2., 8., 3.], [6., 2., 3.]], requires_grad=True)
+    p = b*c
+    p.backward(tensor([[2., 2., 3.], [4., 4., 3.], [1., 2., 3.]]))
+    print(b.grad, c.grad)
+    q = Matrix([[1., 2., 3.], [2., 5., 3.], [6., 2., 3.]])
+    w = Matrix([[1., 2., 3.], [2., 8., 3.], [6., 2., 3.]])
+    o = q*w
+    o.gradient([[2., 2., 3.], [4., 4., 3.], [1., 2., 3.]])
+    print(q.grad, '\n\n', w.grad)
 
