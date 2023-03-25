@@ -1,6 +1,9 @@
 import numpy as np
 from torch import tensor
 import torch
+import math
+
+import grad
 
 
 class Function:
@@ -8,8 +11,10 @@ class Function:
         self.grad = None
         self.x = x
         self.y = y
+        self._x_val = None
+        self._y_val = None
         self.val = self.result()
-        self._expression = np.array2string(self.val, prefix=f"{self.__class__.__name__}(")
+        self._expression = np.array2string(self.val, prefix=f"{self.__class__.__name__}(", separator=', ')
         self.shape = ()
         if hasattr(self.val, "shape"):
             self.shape = self.val.shape
@@ -32,7 +37,8 @@ class Function:
         elif isinstance(grad, (list, float)):
             grad = np.array(grad, dtype='float32')
         elif isinstance(grad, np.ndarray):
-            assert np.issubdtype(grad.dtype, np.int64), "can't use int type"
+            pass
+            # assert np.issubdtype(grad.dtype, np.integer), "can't use int type"
         else:
             raise TypeError("Only supports float, list and ndarray")
         Prime(self, grad=grad, debug=debug)
@@ -90,7 +96,13 @@ class Function:
         return Matmul(other, self)
 
     def __iter__(self):
-        return self.x
+        return iter(self.val)
+
+    def __abs__(self):
+        return Abs(self)
+
+    def __min__(self):
+        return Min(self)
 
 
 class Matrix(Function):
@@ -106,6 +118,9 @@ class Matrix(Function):
 
     def result(self):
         return self.x
+
+    def repeat(self, *direction):
+        return repeat(self, direction)
 
     def __mul__(self, other):
         return starmulti(self, other)
@@ -356,14 +371,39 @@ class Sub(Function):
 
     def result(self):
         result1, result2 = get_values(self.x, self.y)
+        self._x_val = result1
+        self._y_val = result2
         return np.subtract(result1, result2)
 
 
-class Max(Function):
-    def __init__(self, x, axis=0):
+class repeat(Function):
+    def __init__(self, x, direction: tuple):
+        assert 0 not in direction, "repeat has to larger than 0"
+        self.batch = direction
         super().__init__(x)
         self.x = x
+
+    def get_grad(self, grad):
+        grad = np.array(grad)
+        assert grad.shape == self.val.shape, f"grad shape {grad.shape} != self.val shape {self.val.shape}"
+        shape = grad.shape
+        for i in range(-1, -len(shape)-1, -1):
+            new_shape = change_shape(list(grad.shape), self.x.shape[i], i)
+            grad = grad.reshape(new_shape)
+            grad = np.sum(grad, axis=len(new_shape)-1+i)
+        return check_shape(grad, self.x)
+
+    def result(self):
+        val = get_value(self.x)
+        self._x_val = np.tile(val, self.batch)
+        return self._x_val
+
+
+class Max(Function):
+    def __init__(self, x, axis: int | None = None):
         self.axis = axis
+        super().__init__(x)
+        self.x = x
         self.label = None
 
     def get_grad(self, grad):
@@ -374,7 +414,31 @@ class Max(Function):
 
     def result(self):
         result = get_value(self.x)
-        return np.amax(result, axis=self.axis)
+        if self.axis is not None:
+            return np.amax(result, axis=self.axis)
+        else:
+            return np.max(result)
+
+
+class Min(Function):
+    def __init__(self, x, axis: int | None = None):
+        self.axis = axis
+        super().__init__(x)
+        self.x = x
+        self.label = None
+
+    def get_grad(self, grad):
+        mask = (self.x.x == self.val)
+        div = mask.sum(axis=self.axis)
+        new = mask/div
+        return check_shape(grad*new, self.x)
+
+    def result(self):
+        result = get_value(self.x)
+        if self.axis is not None:
+            return np.amax(result, axis=self.axis)
+        else:
+            return np.max(result)
 
 
 class Multi(Function):
@@ -382,34 +446,50 @@ class Multi(Function):
         super().__init__(x, y)
         self.x = x
         self.y = y
-        self.label = None
 
     def get_grad(self, grad):
-        val1, val2 = get_values(self.x, self.y)
-        grad1, grad2, expression1, expression2 = grad*val2, grad*val1, f"{grad}*{self.y}", f"{grad}*{self.x}"
+        grad1, grad2, expression1, expression2 = grad*self._y_val, grad*self._x_val, f"{grad}*{self.y}", f"{grad}*{self.x}"
         return check_shape(grad1, self.x), check_shape(grad2, self.y), expression1, expression2
 
     def result(self):
         result1, result2 = get_values(self.x, self.y)
+        self._x_val = result1
+        self._y_val = result2
         return np.multiply(result1, result2)
+
+
+class mean(Function):
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+
+    def get_grad(self, grad):
+        grad = grad/np.size(self.x.x)
+        grad = np.full(self.x.x.shape, grad)
+        return grad
+
+    def result(self):
+        val = get_value(self.x)
+        return np.mean(val)
 
 
 class Divide(Function):
     def __init__(self, x, y):
-        super().__init__(x=x, y=y)
+        super().__init__(x, y)
         self.x = x
         self.y = y
         self.grad = None
 
     def get_grad(self, grad):
-        val1, val2 = get_values(self.x, self.y)
-        grad1 = np.array(grad)/val2
-        grad2 = np.array(grad)*(-val1/np.square(val2))
+        grad1 = np.array(grad)/self._y_val
+        grad2 = np.array(grad)*(-self._x_val/np.square(self._y_val))
         expression1, expression2 = f"{grad}*(-1)", f"{grad}*1"
         return check_shape(grad1, self.x), check_shape(grad2, self.y), expression1, expression2
 
     def result(self):
         result1, result2 = get_values(self.x, self.y)
+        self._x_val = result1
+        self._y_val = result2
         return result1/result2
 
 
@@ -420,12 +500,12 @@ class exp(Function):
         self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*np.exp(val)
+        grad = grad*np.exp(self._x_val)
         return check_shape(grad, self.x)
 
     def result(self) -> np.ndarray:
         val = get_value(self.x)
+        self._x_val = val
         return np.exp(val)
 
     def __getitem__(self, item):
@@ -440,12 +520,13 @@ class pow(Function):
         self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*self.power*np.power(val, self.power-1)
+        grad = grad*self.power*np.power(self._x_val, self.power-1)
         return check_shape(grad, self.x)
 
     def result(self):
-        return np.power(get_value(self.x), self.power)
+        val = get_value(self.x)
+        self._x_val = val
+        return np.power(val, self.power)
 
     def gradient(self, grad=None, debug=False):
         """
@@ -468,12 +549,12 @@ class sin(Function):
         self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*np.cos(val)
+        grad = grad*np.cos(self._x_val)
         return check_shape(grad, self.x)
 
     def result(self):
         val = get_value(self.x)
+        self._x_val = val
         return np.sin(val)
 
 
@@ -484,12 +565,12 @@ class cos(Function):
         self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = -grad*np.sin(val)
+        grad = -grad*np.sin(self._x_val)
         return check_shape(grad, self.x)
 
     def result(self):
         val = get_value(self.x)
+        self._x_val = val
         return np.cos(val)
 
 
@@ -500,12 +581,12 @@ class sec(Function):
         self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*np.tan(val)*np.sec(val)
+        grad = grad*np.tan(self._x_val)*np.sec(self._x_val)
         return check_shape(grad, self.x)
 
     def result(self):
         val = get_value(self.x)
+        self._x_val = val
         return 1/np.cos(val)
 
 
@@ -516,12 +597,12 @@ class arcsin(Function):
         self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*(1/np.sqrt(1-np.square(val)))
+        grad = grad*(1/np.sqrt(1-np.square(self._x_val)))
         return check_shape(grad, self.x)
 
     def result(self):
         val = get_value(self.x)
+        self._x_val = val
         return np.arcsin(val)
 
 
@@ -532,12 +613,12 @@ class arcos(Function):
         self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*(-1/np.sqrt(val+1))
+        grad = grad*(-1/np.sqrt(self._x_val+1))
         return check_shape(grad, self.x)
 
     def result(self):
         val = get_value(self.x)
+        self._x_val = val
         return np.arccos(val)
 
 
@@ -545,16 +626,37 @@ class ln(Function):
     def __init__(self, x):
         super().__init__(x)
         self.x = x
-        self.expression = x
 
     def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*(1/val)
+        grad = grad*(1/self._x_val)
         return check_shape(grad, self.x)
 
     def result(self):
         val = get_value(self.x)
+        assert np.all(val > 0), "input has element <= zero"
+        self._x_val = val
         return np.log(val)
+
+
+class log(Function):
+    """
+    any base log
+    """
+    def __init__(self, base, x):
+        self.base = base
+        super().__init__(x)
+        self.x = x
+        assert base != 0, "base can't be zero"
+
+    def get_grad(self, grad):
+        grad = grad*(1/(self._x_val*np.log(self.base)))
+        return check_shape(grad, self.x)
+
+    def result(self):
+        val = get_value(self.x)
+        assert np.all(val > 0), "input has element <= zero"
+        self._x_val = val
+        return np.log(val)/np.log(self.base)
 
 
 class cot(Function):
@@ -685,6 +787,47 @@ class sqrt:
         return np.sqrt(val)
 
 
+class argmax(Function):
+    def __init__(self, x):
+        super(argmax, self).__init__(x)
+        self.x = x
+
+    def result(self):
+        val = get_value(self.x)
+        return np.argmax(val)
+
+    def gradient(self, grad: list | float | np.ndarray | None = None, debug=False) -> None:
+        raise RuntimeError("Doesn't need gradient method")
+
+
+class argmin(Function):
+    def __init__(self, x):
+        super(argmin, self).__init__(x)
+        self.x = x
+
+    def result(self):
+        val = get_value(self.x)
+        return np.argmin(val)
+
+    def gradient(self, grad: list | float | np.ndarray | None = None, debug=False) -> None:
+        raise RuntimeError("Doesn't need gradient method")
+
+
+class Abs(Function):
+    def __init__(self, x):
+        super(Abs, self).__init__(x)
+        self.x = x
+
+    def result(self):
+        val = get_value(self.x)
+        return np.abs(val)
+
+    def get_grad(self, grad):
+        val = (self.x.x != self.val)
+        val = np.where(val == 0, 1, -1)
+        return check_shape(grad*val, self.x)
+
+
 class Prime:
     def __init__(self, func, grad, label="x", express="", debug=False):
         self.grad = grad
@@ -792,18 +935,22 @@ def check_shape(grad, inp):
         shape = ()
     offset = len(grad.shape) - len(shape)
     if offset < 0:
-        raise RuntimeError(f"grad shape {grad.shape} doesn't match {shape}")
+        raise RuntimeError(f"grad shape {grad.shape} smaller than {shape}")
     for _ in range(offset):
         grad = np.sum(grad, axis=0)
     return grad
 
 
+def change_shape(x, colms, index):
+    temp = x[index]
+    x[index] = temp//colms
+    x.insert(len(x) + 1 + index, colms)
+    return x
+
 
 class Result:
-    def __init__(self, func, head=True):
-        # print("找到可求导变量:", type(func))
+    def __init__(self, func):
         self.result = self.get_result(func)
-        # print("结果:", self.result)
 
     def get_result(self, func):
         if isinstance(func, (int, float, np.ndarray)):
@@ -822,23 +969,20 @@ class Result:
 
 
 derivatives = (exp, sin, tan, sec, pow, ln, arcsin, arcos, arcot, arctan, cos, csc, cot, Divide, Add, Multi, Sub,
-               X, sqrt, square, transpose, trace, inv, Sum, Max, Slice, reshape)
+               X, sqrt, square, transpose, trace, inv, Sum, Max, Slice, reshape, Abs, Min, mean, log, repeat)
 
 
 if __name__ == "__main__":
-    b = tensor([[1., 2., 3.], [4., 5., 6.]], requires_grad=True)
+    b = tensor(np.arange(0., 120.).reshape((2, 2, 5, 6)), requires_grad=True)
     c = tensor([[7., 8., 9.]], requires_grad=True)
-    p = b*c
-    p.backward(tensor([[1., 1., 1., ], [1., 1., 1.]]))
-    print(b.grad)
-    q = Matrix([[1, 2, 3], [4, 5, 6]])
+    p = b.repeat(2, 2, 2, 2)
+    p.backward(tensor(np.arange(0., 1920.).reshape((4, 4, 10, 12))))
+    q = Matrix(np.arange(0., 120.).reshape((2, 2, 5, 6)))
     w = Matrix([[7, 8, 9]])
-    p = q*w
-    p.gradient([[1, 1, 1, ], [1, 1, 1]])
+    i = q.repeat(2, 2, 2, 2)
+    o = np.arange(0., 1920.).reshape((4, 4, 10, 12))
+    i.gradient(o)
     print(q.grad)
-    # print(q.grad)
-    # i = list(locals().items())
-    # for j, k in i:
-    #     if type(k) is Matrix:
-    #         k.label = j
+    print(b.grad)
+
 
