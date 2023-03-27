@@ -8,14 +8,19 @@ import grad
 
 class Function:
     def __init__(self, x=None, y=None):
-        self.grad = None
         self.x = x
         self.y = y
+        if y is None:
+            self.arguments = (x,)
+        else:
+            self.arguments = (x, y)
         self._x_val = None
         self._y_val = None
         self.val = self.result()
         self._expression = np.array2string(self.val, prefix=f"{self.__class__.__name__}(", separator=', ')
         self.shape = ()
+        self.parent = None
+        self.graph = None
         if hasattr(self.val, "shape"):
             self.shape = self.val.shape
 
@@ -25,24 +30,30 @@ class Function:
         """
         pass
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         """
         require to implement by yourself
         """
         pass
 
-    def gradient(self, grad: list | float | np.ndarray | None = None, debug=False) -> None:
+    def get_graph(self, grad, index):
+        pass
+
+    def gradient(self, grad: list | float | np.ndarray | None = None, debug=False, create_graph=False) -> None:
         if grad is None:
             grad = np.array(1.)
         elif isinstance(grad, (list, float)):
             grad = np.array(grad, dtype='float32')
         elif isinstance(grad, np.ndarray):
             pass
-            # assert np.issubdtype(grad.dtype, np.integer), "can't use int type"
         else:
             raise TypeError("Only supports float, list and ndarray")
-        Prime(self, grad=grad, debug=debug)
-        set_grads(self.x, self.y)
+        Prime(self, grad=grad, debug=debug, create_graph=create_graph)
+        # if create_graph and self.parent is not None:
+        #     self.parent.graph = self.graph
+        # if create_graph and self.parent is None:
+        #     self.graph[0].parent = self
+        #     self.graph[1].parent = self
 
     def reshape(self, *shape):
         if len(shape) == 1 and isinstance(shape[0], tuple):
@@ -109,12 +120,14 @@ class Matrix(Function):
     def __init__(self, data):
         x = np.array(data)
         super().__init__(x)
+        self.grad = None
         self.x = x
         self.ls = data
         self.shape = x.shape
         self.T = np.transpose(x)
         self.label = None
         self.size = x.size
+        self.graph = self
 
     def result(self):
         return self.x
@@ -141,7 +154,7 @@ class Slice(Function):
         self._shape = data.shape
         self._index = index
 
-    def get_grad(self, grad=None):
+    def get_grad(self, create_graph, grad=None):
         """
         :param grad: same shape as the sliced array shape
         :return: ndarray
@@ -174,7 +187,7 @@ class reshape(Function):
         self._shape = val.shape
         self.size = val.size
 
-    def get_grad(self, grad=None):
+    def get_grad(self, create_graph, grad=None):
         assert grad.size == self.size
         grad = grad.reshape(self._shape)
         return grad
@@ -199,7 +212,7 @@ class Matmul(Function):
         self.x = x
         self.y = y
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad1 = grad@self.y.T
         grad2 = self.x.T@grad
         expression1, expression2 = f"{grad}@{self.y.T}", f"{self.x.T}@{grad}"
@@ -209,7 +222,7 @@ class Matmul(Function):
         val1, val2 = get_values(self.x, self.y)
         return val1@val2
 
-    def gradient(self, grad: list | None = None, debug=False):
+    def gradient(self, grad: list | None = None, debug=False, create_graph=False):
         """
         :param grad: d(loss)/d(self)
         :return: (d(loss)/d(self))@self.y.T, self.x.T@(d(loss)/d(self))
@@ -232,12 +245,26 @@ class starmulti(Function):
         self.x = x
         self.y = y
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         val1, val2 = get_values(self.x, self.y)
         grad1 = val2*grad
         grad2 = grad*val1
+        if create_graph:
+            self.get_graph(grad, 0)
         expression1, expression2 = f"{self.x}*{grad}", f"{grad}*{self.y}"
         return check_shape(grad1, self.x), check_shape(grad2, self.y), expression1, expression2
+
+    def get_graph(self, grad, index):
+        self.graph = [starmulti(self.y, grad), starmulti(grad, self.x)]
+        if self.parent is not None:
+            if self.parent.graph:
+                self.parent.graph[index].x = self.graph[index]
+            else:
+                self.parent.graph.x = self.graph[index]
+        if hasattr(self.x, 'parent'):
+            self.x.parent = self
+        if hasattr(self.y, 'parent'):
+            self.y.parent = self
 
     def result(self):
         val1, val2 = get_values(self.x, self.y)
@@ -249,7 +276,7 @@ class transpose(Function):
         super().__init__(x)
         self.x = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         return check_shape(grad, self.x.shape)
 
     def result(self):
@@ -278,7 +305,7 @@ class trace(Function):
         super().__init__(x)
         self.x = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         val = get_value(self.x)
         assert val.shape[-2] == val.shape[-1], "input has to be square matrix"
         grad = grad*np.identity(val.shape[0])
@@ -294,7 +321,7 @@ class inv(Function):
         super().__init__(x)
         self.x = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         val = get_value(self.x)
         assert val.shape == grad.shape
         temp = np.linalg.inv(val)
@@ -305,7 +332,7 @@ class inv(Function):
         val = get_value(self.x)
         return np.linalg.inv(val)
 
-    def gradient(self, grad=1.0, debug=False):
+    def gradient(self, grad=1.0, debug=False, create_graph=False):
         """
         grad has to have the same shape as self.x
 
@@ -325,14 +352,38 @@ class Add(Function):
         self.x = x
         self.y = y
 
-    def get_grad(self, grad):
-        grad1, grad2, expression1, expression2 = grad, grad, f"{grad}*1", f"{grad}*1"
-        self.grad = (grad1, grad2)
+    def get_grad(self, grad, create_graph):
+        grad1, grad2, expression1, expression2 = grad+1e-9, grad+1e-10, grad, grad
+        if create_graph:
+            self.get_graph(grad, 0)
         return check_shape(grad1, self.x), check_shape(grad2, self.y), expression1, expression2
+
+    def get_graph(self, grad, index):
+        self.graph = [Add(Matrix([1.]), Matrix([1.])), Add(Matrix([1.]), Matrix([1.]))]
+        if self.parent is not None:
+            if self.parent.graph:
+                self.parent.graph[index].x = self.graph[index]
+            else:
+                self.parent.graph.x = self.graph[index]
+        if hasattr(self.x, 'parent'):
+            self.x.parent = self
+        if hasattr(self.y, 'parent'):
+            self.y.parent = self
 
     def result(self):
         result1, result2 = get_values(self.x, self.y)
         return np.add(result1, result2)
+
+    def gradient(self, grad: list | float | np.ndarray | None = None, debug=False, create_graph=False) -> None:
+        if grad is None:
+            grad = np.array(1.)
+        elif isinstance(grad, (list, float)):
+            grad = np.array(grad, dtype='float32')
+        elif isinstance(grad, np.ndarray):
+            pass
+        else:
+            raise TypeError("Only supports float, list and ndarray")
+        Prime(self, grad=grad, debug=debug, create_graph=create_graph)
 
 
 class Sum(Function):
@@ -341,7 +392,7 @@ class Sum(Function):
         self.x = x
         self.axis = axis
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         val = get_value(grad)
         grad = np.broadcast_to(val, self.x.x.shape)
         return check_shape(grad, self.x)
@@ -350,7 +401,7 @@ class Sum(Function):
         result1 = get_value(self.x)
         return np.sum(result1, axis=self.axis)
 
-    def gradient(self, grad=1.0, debug=False):
+    def gradient(self, grad=1.0, debug=False, create_graph=False):
         Prime(self, grad=grad, debug=debug)
         self.x.grad = Matrix(self.x.grad)
 
@@ -365,7 +416,7 @@ class Sub(Function):
         self.y = y
         self.label = None
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad1, grad2, expression1, expression2 = -1*grad, grad, f"{grad}*(-1)", f"{grad}*1"
         return check_shape(grad1, self.x), check_shape(grad2, self.y), expression1, expression2
 
@@ -383,15 +434,16 @@ class repeat(Function):
         super().__init__(x)
         self.x = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = np.array(grad)
+        x = self.x
         assert grad.shape == self.val.shape, f"grad shape {grad.shape} != self.val shape {self.val.shape}"
-        shape = grad.shape
-        for i in range(-1, -len(shape)-1, -1):
-            new_shape = change_shape(list(grad.shape), self.x.shape[i], i)
+        length = len(grad.shape)
+        for i in range(-1, -length-1, -1):
+            new_shape = change_shape(list(grad.shape), x.shape[i], i)
             grad = grad.reshape(new_shape)
-            grad = np.sum(grad, axis=len(new_shape)-1+i)
-        return check_shape(grad, self.x)
+            grad = np.sum(grad, axis=length+i)
+        return check_shape(grad, x)
 
     def result(self):
         val = get_value(self.x)
@@ -406,7 +458,8 @@ class Max(Function):
         self.x = x
         self.label = None
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
+        assert self.x.shape == self.val.shape, f"self.x shape{self.x.shape} != self.val shape {self.val.shape}"
         mask = (self.x.x == self.val)
         div = mask.sum(axis=self.axis)
         new = mask/div
@@ -427,7 +480,8 @@ class Min(Function):
         self.x = x
         self.label = None
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
+        assert self.x.shape == self.val.shape, f"self.x shape{self.x.shape} != self.val shape {self.val.shape}"
         mask = (self.x.x == self.val)
         div = mask.sum(axis=self.axis)
         new = mask/div
@@ -446,9 +500,19 @@ class Multi(Function):
         super().__init__(x, y)
         self.x = x
         self.y = y
+        if hasattr(self.x, 'parent'):
+            self.x.parent = self
+        if hasattr(self.y, 'parent'):
+            self.y.parent = self
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad1, grad2, expression1, expression2 = grad*self._y_val, grad*self._x_val, f"{grad}*{self.y}", f"{grad}*{self.x}"
+        if create_graph:
+            self.graph = [Multi(self.y, grad), Multi(grad, self.x)]
+            if hasattr(self.x, 'parent'):
+                self.x.parent = self
+            if hasattr(self.y, 'parent'):
+                self.y.parent = self
         return check_shape(grad1, self.x), check_shape(grad2, self.y), expression1, expression2
 
     def result(self):
@@ -463,7 +527,7 @@ class mean(Function):
         super().__init__(x)
         self.x = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad/np.size(self.x.x)
         grad = np.full(self.x.x.shape, grad)
         return grad
@@ -480,7 +544,7 @@ class Divide(Function):
         self.y = y
         self.grad = None
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad1 = np.array(grad)/self._y_val
         grad2 = np.array(grad)*(-self._x_val/np.square(self._y_val))
         expression1, expression2 = f"{grad}*(-1)", f"{grad}*1"
@@ -499,9 +563,23 @@ class exp(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad*np.exp(self._x_val)
+        if create_graph:
+            self.get_graph(grad, 0)
         return check_shape(grad, self.x)
+
+    def get_graph(self, grad, index):
+        self.graph = [exp(self.x), exp(self.x)]
+        if self.parent is not None:
+            if self.parent.graph:
+                self.parent.graph[index].x = self.graph[index]
+            else:
+                self.parent.graph.x = self.graph[index]
+        if hasattr(self.x, 'parent'):
+            self.x.parent = self
+        if hasattr(self.y, 'parent'):
+            self.y.parent = self
 
     def result(self) -> np.ndarray:
         val = get_value(self.x)
@@ -514,21 +592,36 @@ class exp(Function):
 
 class pow(Function):
     def __init__(self, x, power):
+        self.power = power
         super().__init__(x, power)
         self.x = x
-        self.power = power
         self.expression = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad*self.power*np.power(self._x_val, self.power-1)
+        if create_graph:
+            self.get_graph(grad, 0)
         return check_shape(grad, self.x)
+
+    def get_graph(self, grad, index):
+        # print(self.power*(self.power-1)*pow(self.x, self.power-2))
+        self.graph = [self.power*pow(self.x, self.power-1), self.power*pow(self.x, self.power-1)]
+        if self.parent is not None:
+            if self.parent.graph:
+                self.parent.graph[index].x = self.graph[index]
+            else:
+                self.parent.graph.x = self.graph[index]
+        if hasattr(self.x, 'parent'):
+            self.x.parent = self
+        if hasattr(self.y, 'parent'):
+            self.y.parent = self
 
     def result(self):
         val = get_value(self.x)
         self._x_val = val
         return np.power(val, self.power)
 
-    def gradient(self, grad=None, debug=False):
+    def gradient(self, grad=None, debug=False, create_graph=False):
         """
         grad has to have the same shape as self.x
 
@@ -539,7 +632,7 @@ class pow(Function):
         if grad is None:
             grad = 1.0
         grad = np.array(grad)
-        Prime(self, grad=grad, debug=debug)
+        Prime(self, grad=grad, debug=debug, create_graph=create_graph)
 
 
 class sin(Function):
@@ -548,9 +641,21 @@ class sin(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad*np.cos(self._x_val)
         return check_shape(grad, self.x)
+
+    def get_graph(self, grad, *func):
+        self.graph = [cos(func[0][0])]
+        if self.parent is not None:
+            if hasattr(self.parent.graph.x, 'x'):
+                self.parent.graph.x.x = self.graph
+            else:
+                self.parent.graph.x = self.graph
+        if hasattr(self.x, 'parent'):
+            self.x.parent = self
+        if hasattr(self.y, 'parent'):
+            self.y.parent = self
 
     def result(self):
         val = get_value(self.x)
@@ -564,9 +669,21 @@ class cos(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = -grad*np.sin(self._x_val)
         return check_shape(grad, self.x)
+
+    def get_graph(self, grad, *func):
+        self.graph = [-sin(func[0][0])]
+        if self.parent is not None:
+            if hasattr(self.parent.graph.x, 'x'):
+                self.parent.graph.x.x = self.graph
+            else:
+                self.parent.graph.x = self.graph
+        if hasattr(self.x, 'parent'):
+            self.x.parent = self
+        if hasattr(self.y, 'parent'):
+            self.y.parent = self
 
     def result(self):
         val = get_value(self.x)
@@ -580,8 +697,10 @@ class sec(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
-        grad = grad*np.tan(self._x_val)*np.sec(self._x_val)
+    def get_grad(self, grad, create_graph):
+        grad = grad*np.tan(self._x_val)*(1/np.cos(self._x_val))
+        if create_graph:
+            set_graph(self, tan(self.x)*sec(self.x))
         return check_shape(grad, self.x)
 
     def result(self):
@@ -596,7 +715,7 @@ class arcsin(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad*(1/np.sqrt(1-np.square(self._x_val)))
         return check_shape(grad, self.x)
 
@@ -612,7 +731,7 @@ class arcos(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad*(-1/np.sqrt(self._x_val+1))
         return check_shape(grad, self.x)
 
@@ -627,8 +746,10 @@ class ln(Function):
         super().__init__(x)
         self.x = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad*(1/self._x_val)
+        if create_graph:
+            set_graph(self, 1/self.x)
         return check_shape(grad, self.x)
 
     def result(self):
@@ -648,8 +769,10 @@ class log(Function):
         self.x = x
         assert base != 0, "base can't be zero"
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         grad = grad*(1/(self._x_val*np.log(self.base)))
+        if create_graph:
+            set_graph(self, 1/(self.x*log(10, self.base)))
         return check_shape(grad, self.x)
 
     def result(self):
@@ -665,7 +788,7 @@ class cot(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         val = get_value(self.x)
         grad = grad*np.square(csc(val))
         return check_shape(grad, self.x)
@@ -681,9 +804,10 @@ class csc(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*(-1)*np.csc(val)*(cot(val).result())
+    def get_grad(self, grad, create_graph):
+        grad = grad*(-1)*np.csc(self.x.val)*cot(self.x.val).val
+        if create_graph:
+            set_graph(self, -csc(self.x)*cot(self.x))
         return check_shape(grad, self.x)
 
     def result(self):
@@ -697,9 +821,10 @@ class arcot(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*(-1/(1 + np.square(val)))
+    def get_grad(self, grad, create_graph):
+        grad = grad*(-1/(1 + np.square(self.x.val)))
+        if create_graph:
+            set_graph(self, -1/(1+square(sec(self.x))))
         return check_shape(grad, self.x)
 
     def result(self):
@@ -713,9 +838,10 @@ class tan(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*(1/np.square(sec(val).result()))
+    def get_grad(self, grad, create_graph):
+        grad = grad*(np.square(sec(self.x.val).val))
+        if create_graph:
+            set_graph(self, square(sec(self.x)))
         return check_shape(grad, self.x)
 
     def result(self):
@@ -729,9 +855,10 @@ class arctan(Function):
         self.x = x
         self.expression = x
 
-    def get_grad(self, grad):
-        val = get_value(self.x)
-        grad = grad*(1/(1 + np.square(val)))
+    def get_grad(self, grad, create_graph):
+        grad = grad*(1/(1 + np.square(self.x.val)))
+        if create_graph:
+            set_graph(self, 1/(1 + square(self.x)))
         return check_shape(grad, self.x)
 
     def result(self):
@@ -761,9 +888,11 @@ class square(Function):
         self.expression = x
         self.grad = None
 
-    def get_grad(self, grad):
+    def get_grad(self, grad, create_graph):
         val = get_value(self.x)
         grad = grad*2*val
+        if create_graph:
+            set_graph(self, 2*self.x)
         return check_shape(grad, self.x)
 
     def result(self):
@@ -829,11 +958,12 @@ class Abs(Function):
 
 
 class Prime:
-    def __init__(self, func, grad, label="x", express="", debug=False):
+    def __init__(self, func, grad, label="x", express="", debug=False, create_graph=False):
         self.grad = grad
         self.express = express
         self.label = label
         self.debug = debug
+        self.create_graph = create_graph
         self.prime(func)
 
     def prime(self, func):
@@ -843,31 +973,31 @@ class Prime:
                 print("Branch 1:", func, id(func))
             return 0, 0, "0"
         elif isinstance(func, (X, Matrix)):
-            if self.debug:
-                func._expression = np.array2string(func.val, prefix=f"Branch 2:  {self.__class__.__name__}(")
-                print("Branch 2:", func, id(func))
             if func.grad is None:
                 func.grad = self.grad
             else:
                 func.grad += self.grad
+            if self.debug:
+                func._expression = np.array2string(func.val, prefix=f"Branch 2:  {self.__class__.__name__}(")
+                print("Branch 2:", func, func.grad, id(func))
         elif isinstance(func, (Divide, Add, Multi, Sub, Matmul, starmulti)):
+            grad1, grad2, expression1, expression2 = func.get_grad(self.grad, create_graph=self.create_graph)
             if self.debug:
                 func._expression = np.array2string(func.val, prefix=f"Branch 3:  {self.__class__.__name__}(")
-                print("Branch 3:", func, id(func))
-            grad1, grad2, expression1, expression2 = func.get_grad(self.grad)
-            Prime(func.x, grad1, debug=self.debug)
-            Prime(func.y, grad2, debug=self.debug)
+                print("Branch 3:", func, grad1, grad2, id(func))
+            Prime(func.x, grad1, debug=self.debug, create_graph=self.create_graph)
+            Prime(func.y, grad2, debug=self.debug, create_graph=self.create_graph)
             self.express = (expression1, expression2)
         elif type(func) in derivatives:
+            grad = func.get_grad(self.grad, create_graph=self.create_graph)
             if self.debug:
                 func._expression = np.array2string(func.val, prefix=f"Branch 4:  {self.__class__.__name__}(")
-                print("Branch 4:", func, id(func))
-            grad = func.get_grad(self.grad)
-            Prime(func.x, grad)
+                print("Branch 4:", func, grad, id(func))
+            Prime(func.x, grad, create_graph=self.create_graph, debug=self.debug)
         elif isinstance(func.x, (int, float, np.ndarray)):
             if self.debug:
                 func._expression = np.array2string(func, prefix=f"Branch 5:  {self.__class__.__name__}(")
-                print("Branch 5:", func, id(func))
+                print("Branch 5:", func,  id(func))
             return 0, 0, "0"
 
 
@@ -948,6 +1078,13 @@ def change_shape(x, colms, index):
     return x
 
 
+def set_graph(self, func):
+    self.graph = func
+    if self.parent is not None:
+        self.parent.graph.y = self.graph
+    self.x.parent = self
+
+
 class Result:
     def __init__(self, func):
         self.result = self.get_result(func)
@@ -973,16 +1110,40 @@ derivatives = (exp, sin, tan, sec, pow, ln, arcsin, arcos, arcot, arctan, cos, c
 
 
 if __name__ == "__main__":
-    b = tensor(np.arange(0., 120.).reshape((2, 2, 5, 6)), requires_grad=True)
-    c = tensor([[7., 8., 9.]], requires_grad=True)
-    p = b.repeat(2, 2, 2, 2)
-    p.backward(tensor(np.arange(0., 1920.).reshape((4, 4, 10, 12))))
-    q = Matrix(np.arange(0., 120.).reshape((2, 2, 5, 6)))
-    w = Matrix([[7, 8, 9]])
-    i = q.repeat(2, 2, 2, 2)
-    o = np.arange(0., 1920.).reshape((4, 4, 10, 12))
-    i.gradient(o)
-    print(q.grad)
-    print(b.grad)
-
-
+    x = Matrix([1., 7., 5.])
+    y = Matrix([1., 6., 5.])
+    z = pow(x, 3)
+    z.gradient([2., 2., 2.], create_graph=True)
+    print(x.grad, y.grad)
+    x.grad = 0
+    y.grad = 0
+    z.graph[0].gradient([3., 3., 3.], create_graph=True)
+    print(x.grad, y.grad)
+    x.grad = 0
+    y.grad = 0
+    z.graph[0].graph[0].gradient([3., 3., 3.], create_graph=True)
+    print(x.grad, y.grad)
+    x.grad = 0
+    y.grad = 0
+    z.graph[0].graph[0].graph[0].gradient([3., 3., 3.], create_graph=True)
+    print(x.grad, y.grad)
+# ======================================================================================================================
+    x = tensor([1., 7., 5.], requires_grad=True)
+    y = tensor([1., 6., 5.], requires_grad=True)
+    z = torch.pow(x, 3)
+    z.backward(tensor([2., 2., 2.]), create_graph=True)
+    print(x.grad, y.grad)
+    x.grad.data.zero_()
+    # y.grad.data.zero_()
+    torch.autograd.backward(x.grad, grad_tensors=tensor([3., 3., 3.]), create_graph=True)
+    print(x.grad, y.grad)
+    x.grad.data.zero_()
+    # y.grad.data.zero_()
+    torch.autograd.backward(x.grad, grad_tensors=tensor([4., 4., 4.]), create_graph=True)
+    x.grad.data.zero_()
+    # y.grad.data.zero_()
+    print(x.grad, y.grad)
+    torch.autograd.backward(x.grad, grad_tensors=tensor([4., 4., 4.]), create_graph=True)
+    x.grad.data.zero_()
+    # y.grad.data.zero_()
+    print(x.grad, y.grad)
