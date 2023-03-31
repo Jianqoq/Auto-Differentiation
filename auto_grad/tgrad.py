@@ -954,12 +954,7 @@ class Prime:
 
     def prime(self, func):
 
-        if isinstance(func, (int, float, np.ndarray)):
-            if self.debug:
-                func._expression = np.array2string(func, prefix=f"Branch 1:  {self.__class__.__name__}(")
-                print("Branch 1:", func, id(func))
-
-        elif isinstance(func, Matrix):
+        if isinstance(func, Matrix):
             func.grad = self.grad if func.grad is None else func.grad + self.grad
             if self.debug:
                 func._expression = np.array2string(func.val, prefix=f"Branch 2:  {self.__class__.__name__}(")
@@ -1007,11 +1002,6 @@ class Prime:
                     func.x.graph.parent = func.x
                     func.x.son = func.x.graph
             Prime(func.x, grad, create_graph=self.create_graph, debug=self.debug)
-
-        elif isinstance(func.x, (int, float, np.ndarray)):
-            if self.debug:
-                func._expression = np.array2string(func, prefix=f"Branch 5:  {self.__class__.__name__}(")
-                print("Branch 5:", func,  id(func))
 
 
 class View:
