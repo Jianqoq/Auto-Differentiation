@@ -2,6 +2,8 @@ import numpy as np
 import graphviz
 import random
 from time import time
+from sympy import powsimp, cancel, combsimp
+import matplotlib.pyplot as plt
 
 
 class Function:
@@ -18,8 +20,11 @@ class Function:
         self._x_val = None
         self._y_val = None
         self.val = self.result()
-        self._expression = np.array2string(
-            self.val, prefix=f"{self.__class__.__name__}(", separator=', ')
+        if isinstance(self.val, np.ndarray):
+            self._expression = np.array2string(
+                self.val, prefix=f"{self.__class__.__name__}(", separator=', ')
+        else:
+            self._expression = self.val
         self.shape = ()
         self.graph = None
         self.holder = 0
@@ -28,11 +33,17 @@ class Function:
         self.view = None
         self.label = None
         self.flag = False
+        self.op = None
+        self._optimized_graph = None
         self.nth = 0
         if hasattr(self.val, "shape"):
             self.shape = self.val.shape
 
     def update_label(self):
+        pass
+
+    @staticmethod
+    def plot(*func, start=-10, end=10):
         pass
 
     def result(self) -> np.ndarray:
@@ -50,10 +61,10 @@ class Function:
     def get_graph(self):
         return
 
-    def visualize(self, open_file=False, size=None):
+    def visualize(self, open_file=False, file_name=None, size=None):
         begin = time()
         total = search_nodes(self)
-        p = View(self, head=True, time_begin=begin, total_task=total)
+        p = View(self, head=True, time_begin=begin, total_task=total, filename=file_name)
         if size is not None:
             p.graph_object.graph_attr['size'] = size
 
@@ -137,13 +148,18 @@ class Function:
         return Matmul(other, self)
 
     def __iter__(self):
-        return iter(self.val)
+        for index, val in enumerate(self.val):
+            yield Matrix(val, f"Mat{index}")
 
     def __abs__(self):
         return Abs(self)
 
     def __repr__(self):
         return str(self)
+
+    def __getitem__(self, item):
+        x = self.val[item]
+        return Slice(x, self, item)
 
     def __min__(self):
         return Min(self)
@@ -164,6 +180,7 @@ class Matrix(Function):
         self.T = np.transpose(x)
         self.size = x.size
         self.graph = None
+        self._islast = False
 
     def result(self):
         return self.x
@@ -171,21 +188,14 @@ class Matrix(Function):
     def repeat(self, *direction):
         return repeat(self, direction)
 
-    def __mul__(self, other):
-        return starmulti(self, other)
-
-    def __rmul__(self, other):
-        return starmulti(other, self)
-
-    def __getitem__(self, item):
-        x = self.x[item]
-        return Slice(x, self, item)
+    def __len__(self):
+        return len(self.x)
 
 
 class Slice(Function):
 
     def __init__(self, data, origin_data, index):
-        super().__init__(origin_data)
+        super().__init__(data)
         self.x = origin_data
         self.sliced_data = data
         self._shape = data.shape
@@ -207,12 +217,86 @@ class Slice(Function):
                  create_graph=False):
         if grad is None:
             grad = np.ones(self._shape)
+        elif isinstance(grad, np.ndarray):
+            pass
+        else:
+            grad = np.array(grad)
         Prime(self, grad=grad, debug=debug)
-        self.x.grad = Matrix(self.x.grad)
-        self.y.grad = Matrix(self.y.grad)
 
     def result(self):
         return get_value(self.x)
+
+
+class EqualSlice(Function):
+
+    def __init__(self, origin_data, num, axis):
+        self.num = num
+        self.axis = axis
+        # if not isinstance(origin_data, converge):
+        #     origin_data = converge(origin_data.val)
+        super().__init__(origin_data)
+        self._shape = origin_data.shape
+        self.len = len(self.x) - 1
+        self.x3 = self.get_real()
+        self.x1 = [i.label for i in self.x3]
+        self.label = f"EqualSlice({self.x1})"
+        self.grad = None
+
+    def get_grad(self, grad=None, stack = np.hstack):
+        """
+        :param grad: same shape as the sliced array shape
+        :return: ndarray
+        """
+        if grad is None:
+            grad = tuple(i.x for i in self.x3)
+            grad = np.stack(grad, axis=self.axis).reshape(self._shape)
+            return check_shape(grad, self.x)
+        else:
+            grad = tuple(i for i in grad)
+            grad = np.stack(grad, axis=self.axis).reshape(self._shape)
+            return check_shape(grad, self.x)
+
+    def gradient(self,
+                 grad: list | tuple | None = None,
+                 debug=False,
+                 create_graph=False,
+                 stack=np.hstack):
+        if grad is None:
+            pass
+        else:
+            # zeros = np.zeros(self._shape)
+            grad = [np.array(i) for i in grad]
+            #
+            # grad = np.array(grad)
+        Prime(self, grad=grad, debug=debug, stack=stack)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        graph = (self.holder@self.y.T, self.x@self.holder)
+        return graph
+
+    def result(self):
+        val = get_value(self.x)
+        return np.split(val, self.num, axis=self.axis)
+
+    def get_real(self):
+        ls = []
+        for index, val in enumerate(self.val):
+            a = converge(val)
+            a.parent = self
+            a.index = index
+            if index == self.len:
+                a._islast = True
+            ls.append(a)
+        return ls
+
+    def __iter__(self):
+        for index, val in enumerate(self.x):
+            val.parent = self
+            if index == self.len:
+                val._islast = True
+            yield val
 
 
 class reshape(Function):
@@ -260,6 +344,12 @@ class Matmul(Function):
         val1, val2 = get_values(self.x, self.y)
         return val1 @ val2
 
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        graph = (self.holder@self.y.T, self.x@self.holder)
+        return graph
+
     def gradient(self,
                  grad: list | None = None,
                  debug=False,
@@ -290,13 +380,13 @@ class starmulti(Function):
         self.x1 = labels[0]
         self.x2 = labels[1]
         if isinstance(self.x, (Add, Sub, Divide)) and not isinstance(self.y, (Add, Sub, Divide)):
-            self.label = f"({self.x1}) * {self.x2}"
+            self.label = f"({self.x1})*{self.x2}"
         elif not isinstance(self.x, (Add, Sub, Divide)) and isinstance(self.y, (Add, Sub, Divide)):
-            self.label = f"{self.x1} * ({self.x2})"
+            self.label = f"{self.x1}*({self.x2})"
         elif isinstance(self.x, (Add, Sub, Divide)) and isinstance(self.y, (Add, Sub, Divide)):
-            self.label = f"({self.x1}) * ({self.x2})"
+            self.label = f"({self.x1})*({self.x2})"
         else:
-            self.label = f"{self.x1} * {self.x2}"
+            self.label = f"{self.x1}*{self.x2}"
 
     def get_grad(self, grad):
         val1, val2 = get_values(self.x, self.y)
@@ -353,12 +443,19 @@ class trace(Function):
     def __init__(self, x):
         super().__init__(x)
         self.x = x
+        self.shape = None
 
     def get_grad(self, grad):
         val = get_value(self.x)
         assert val.shape[-2] == val.shape[-1], "input has to be square matrix"
         grad = grad * np.identity(val.shape[0])
-        return check_shape(grad, self.x.shape)
+        self.shape = val.shape[0]
+        return check_shape(grad, val)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder*Matrix(np.identity(self.shape), f"eye({self.shape})"),
 
     def result(self):
         val = get_value(self.x)
@@ -370,30 +467,142 @@ class inv(Function):
     def __init__(self, x):
         super().__init__(x)
         self.x = x
+        labels = get_label(x)
+        self.x1 = labels[0]
+        self.label = f"inv({self.x1})"
 
     def get_grad(self, grad):
         val = get_value(self.x)
-        assert val.shape == grad.shape
+        assert val.shape == grad.shape, f"shape {val.shape} != grad shape {grad.shape}"
         temp = np.linalg.inv(val)
         grad = np.transpose(temp @ np.transpose(grad) @ (-temp))  # transpose??
         return check_shape(grad, val)
 
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return transpose(inv(self.x)@transpose(self.holder)@(Matrix(-1, "(-1)")*inv(self.x))),
+
     def result(self):
         val = get_value(self.x)
-        return np.linalg.inv(val)
+        op = np.linalg.inv
+        self.op = op
+        return op(val)
 
-    def gradient(self, grad=1.0, debug=False, create_graph=False):
-        """
-        grad has to have the same shape as self.x
 
-        grad: trace((d(loss)/d(self)).T*d(self.x.T))  --> trace(d(loss)/d(self)*d(self.x))
+class converge(Function):
+    def __init__(self, data, label=None):
+        x = np.array(data)
+        super().__init__(x)
+        self.label = label
+        if label is None:
+            self.label = str(x)
+        self.grad = None
+        self.x = x
+        self.ls = data
+        self.shape = x.shape
+        self.T = np.transpose(x)
+        self.size = x.size
+        self.graph = None
+        self._islast = False
+        self.index = None
 
-        :return: d(loss)/d(self)
-        """
-        assert isinstance(grad, list), "Provide list to calculate the grad"
-        grad = np.array(grad)
-        Prime(self, grad=grad, debug=debug)
-        self.x.grad = Matrix(self.x.grad)
+    def result(self):
+        return self.x
+
+    def repeat(self, *direction):
+        return repeat(self, direction)
+
+    def __len__(self):
+        return len(self.val)
+
+    def __iter__(self):
+        for index, val in enumerate(self.val):
+            yield converge(val, label=f"Converge{index}")
+
+    def __neg__(self):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Multi(Matrix(-1), self)
+            return self.parent.x3[self.index]
+        else:
+            return Multi(Matrix(-1), self)
+
+    def __add__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Add(self, other)
+            return self.parent.x3[self.index]
+        else:
+            return Add(self, other)
+
+    def __radd__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Add(other, self)
+            return self.parent.x3[self.index]
+        else:
+            return Add(other, self)
+
+    def __mul__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Multi(self, other)
+            return self.parent.x3[self.index]
+        else:
+            return Multi(self, other)
+
+    def __rmul__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Multi(other, self)
+            return self.parent.x3[self.index]
+        else:
+            return Multi(other, self)
+
+    def __sub__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Sub(self, other)
+            return self.parent.x3[self.index]
+        else:
+            return Sub(self, other)
+
+    def __rsub__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Sub(other, self)
+            return self.parent.x3[self.index]
+        else:
+            return Sub(other, self)
+
+    def __truediv__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Divide(self, other)
+            return self.parent.x3[self.index]
+        else:
+            return Divide(self, other)
+
+    def __rtruediv__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Divide(other, self)
+            return self.parent.x3[self.index]
+        else:
+            return Divide(other, self)
+
+    def __pow__(self, p, modulo=None):
+        if self.parent is not None:
+            self.parent.x3[self.index] = pow(self, p)
+            return self.parent.x3[self.index]
+        else:
+            return pow(self, p)
+
+    def __matmul__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Matmul(self, other)
+            return self.parent.x3[self.index]
+        else:
+            return Matmul(self, other)
+
+    def __rmatmul__(self, other):
+        if self.parent is not None:
+            self.parent.x3[self.index] = Matmul(other, self)
+            return self.parent.x3[self.index]
+        else:
+            return Matmul(other, self)
 
 
 class Add(Function):
@@ -418,7 +627,7 @@ class Add(Function):
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return Multi(self.holder, Matrix(1., "1")), Multi(Matrix(1., "1"), self.holder)
+        return self.holder, self.holder
 
 
 class Sum(Function):
@@ -456,12 +665,12 @@ class Sub(Function):
     def get_grad(self, grad):
         grad1, grad2, expression1, expression2 = -1 * grad, grad, f"{grad}*(-1)", f"{grad}*1"
         return check_shape(grad1, self.x), check_shape(
-            grad2, self.y), expression1, expression2
+            grad2, self.y)
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return Multi(Matrix(-1., "(-1)"), self.holder), Multi(self.holder, Matrix(1, "1"))
+        return self.holder, starmulti(self.holder, Matrix([-1.], "(-1)"))
 
     def result(self):
         result1, result2 = get_values(self.x, self.y)
@@ -548,12 +757,18 @@ class Multi(Function):
         labels = get_label(x, y)
         self.x1 = labels[0]
         self.x2 = labels[1]
-        if isinstance(self.x, (Add, Sub, Divide)) and not isinstance(self.y, (Add, Sub, Divide)):
+        if self.x1 == self.x2:
+            self.label = f"{self.x1}**2"
+        elif isinstance(self.x, (Add, Sub, Divide)) and not isinstance(self.y, (Add, Sub, Divide)):
             self.label = f"({self.x1})*{self.x2}"
         elif not isinstance(self.x, (Add, Sub, Divide)) and isinstance(self.y, (Add, Sub, Divide)):
             self.label = f"{self.x1}*({self.x2})"
         elif isinstance(self.x, (Add, Sub, Divide)) and isinstance(self.y, (Add, Sub, Divide)):
             self.label = f"({self.x1})*({self.x2})"
+        elif self.x1 == "1":
+            self.label = f"{self.x2}"
+        elif self.x2 == "1":
+            self.label = f"{self.x1}"
         else:
             self.label = f"{self.x1}*{self.x2}"
 
@@ -615,7 +830,7 @@ class Divide(Function):
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return self.holder * (Matrix(1, "1") / self.y), self.holder * (Matrix(-1., "(-1)")*(self.x / square(self.y)))
+        return self.holder/self.y, self.holder * Matrix(-1., "(-1)")*self.x / square(self.y)
 
     def result(self):
         result1, result2 = get_values(self.x, self.y)
@@ -646,8 +861,12 @@ class exp(Function):
         self._x_val = val
         return np.exp(val)
 
-    def __getitem__(self, item):
-        return self.x.x[item]
+    @staticmethod
+    def plot(self=None, start=-10, end=10):
+        x = np.linspace(start, end)
+        y = np.exp(x)
+        plt.plot(x, y)
+        plt.show()
 
 
 class pow(Function):
@@ -657,7 +876,7 @@ class pow(Function):
         super().__init__(x, power)
         self.x = x
         labels = get_label(x)
-        self.label = f"pow({labels[0]}, {power})"
+        self.label = f"{labels[0]}**{power}"
 
     def get_grad(self, grad):
         grad1 = grad * self.power * np.power(self._x_val, self.power - 1)
@@ -673,6 +892,13 @@ class pow(Function):
             self.holder = Matrix(self.holder, f"grad{self.nth}")
         return self.holder * self.power * pow(self.x, self.power - 1),
 
+    @staticmethod
+    def plot(self=None, power=2, start=-10, end=10):
+        x = np.linspace(start, end)
+        y = np.power(x, power)
+        plt.plot(x, y)
+        plt.show()
+
 
 class sin(Function):
 
@@ -681,9 +907,6 @@ class sin(Function):
         self.x = x
         labels = get_label(x)
         self.x1 = labels[0]
-        self.label = f"sin({self.x1})"
-
-    def update_label(self):
         self.label = f"sin({self.x1})"
 
     def get_grad(self, grad):
@@ -699,6 +922,225 @@ class sin(Function):
         val = get_value(self.x)
         self._x_val = val
         return np.sin(val)
+
+    @staticmethod
+    def plot(self=None, start=-10, end=10):
+        x = np.linspace(start, end)
+        y = np.sin(x)
+        plt.plot(x, y)
+        plt.show()
+
+
+class sec(Function):
+
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+        labels = get_label(x)
+        self.x1 = labels[0]
+        self.label = f"sec({self.x1})"
+
+    def get_grad(self, grad):
+        grad = grad * np.tan(self._x_val) * (1 / np.cos(self._x_val))
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder * tan(self.x) * sec(self.x),
+
+    def result(self):
+        val = get_value(self.x)
+        self._x_val = val
+        return 1 / np.cos(val)
+
+    @staticmethod
+    def plot(self=None, start=-10, end=10):
+        x = np.linspace(start, end)
+        y = 1 / np.cos(x)
+        plt.plot(x, y)
+        plt.show()
+
+
+class sinh(Function):
+
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+        labels = get_label(x)
+        self.x1 = labels[0]
+        self.label = f"sinh({self.x1})"
+
+    def get_grad(self, grad):
+        grad = grad * np.cosh(self._x_val)
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder * cosh(self.x),
+
+    def result(self):
+        val = get_value(self.x)
+        self._x_val = val
+        return np.sinh(val)
+
+    @staticmethod
+    def plot(self=None, start=-10, end=10):
+        x = np.linspace(start, end)
+        y = np.sinh(x)
+        plt.plot(x, y)
+        plt.show()
+
+
+class arcsin(Function):
+
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+        labels = get_label(x)
+        self.x1 = labels[0]
+        self.label = f"arcsin({self.x1})"
+
+    def get_grad(self, grad):
+        grad = grad * (1 / np.sqrt(1 - np.square(self._x_val)))
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder * (Matrix(-1, "-1") / sqrt(Matrix(1, "1") - square(self.x))),
+
+    def result(self):
+        val = get_value(self.x)
+        self._x_val = val
+        return np.arcsin(val)
+
+    @staticmethod
+    def plot(self=None, start=-10, end=10):
+        x = np.linspace(start, end)
+        y = np.arcsin(x)
+        plt.plot(x, y)
+        plt.show()
+
+
+class arcsec(Function):
+
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+        labels = get_label(x)
+        self.x1 = labels[0]
+        self.label = f"arcsec({self.x1})"
+
+    def get_grad(self, grad):
+        grad = grad * (1 / (np.abs(self._x_val)*np.sqrt(np.square(self._x_val) - 1)))
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder / Abs(self.x)*sqrt(square(self.x) + Matrix(-1, "(-1)")),
+
+    def result(self):
+        val = get_value(self.x)
+        self._x_val = val
+        return np.arccos(1/val)
+
+    @staticmethod
+    def plot(self=None, start=-10, end=10):
+        x = np.linspace(start, end)
+        y = np.arccos(x)
+        plt.plot(x, y)
+        plt.show()
+
+
+class ln(Function):
+
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+        labels = get_label(x)
+        self.x1 = labels[0]
+        self.label = f"ln({self.x1})"
+
+    def update_label(self):
+        self.label = f"ln({self.x1})"
+
+    def get_grad(self, grad):
+        grad = grad * (1 / self._x_val)
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder / self.x,
+
+    def get_label(self):
+        return
+
+    def result(self):
+        val = get_value(self.x)
+        assert np.all(val > 0), "input has element <= zero"
+        self._x_val = val
+        return np.log(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.log(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
+
+
+class log(Function):
+    """
+    any base log
+    """
+
+    def __init__(self, base, x):
+        self.base = base
+        super().__init__(x)
+        self.x = x
+        assert base != 0, "base can't be zero"
+        labels = get_label(x)
+        self.label = f"log({base}, {labels[0]})"
+
+    def get_grad(self, grad):
+        grad = grad * (1 / (self._x_val * np.log(self.base)))
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder/(self.x * ln(self.base)),
+
+    def result(self):
+        val = get_value(self.x)
+        assert np.all(val > 0), "input has element <= zero"
+        self._x_val = val
+        return np.log(val) / np.log(self.base)
+
+    @staticmethod
+    def plot(base=10, *func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.log(x) / np.log(base)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
 class cos(Function):
@@ -727,59 +1169,57 @@ class cos(Function):
         self._x_val = val
         return np.cos(val)
 
-
-class sec(Function):
-
-    def __init__(self, x):
-        super().__init__(x)
-        self.x = x
-        labels = get_label(x)
-        self.x1 = labels[0]
-        self.label = f"sec({self.x1})"
-
-    def update_label(self):
-        self.label = f"sec({self.x1})"
-
-    def get_grad(self, grad):
-        grad = grad * np.tan(self._x_val) * (1 / np.cos(self._x_val))
-        return check_shape(grad, self.x)
-
-    def get_graph(self):
-        if isinstance(self.holder, (np.ndarray, int, float)):
-            self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return self.holder * tan(self.x) * sec(self.x),
-
-    def result(self):
-        val = get_value(self.x)
-        self._x_val = val
-        return 1 / np.cos(val)
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.cos(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
-class arcsin(Function):
+class cosh(Function):
 
     def __init__(self, x):
         super().__init__(x)
         self.x = x
         labels = get_label(x)
         self.x1 = labels[0]
-        self.label = f"arcsin({self.x1})"
-
-    def update_label(self):
-        self.label = f"arcsin({self.x1})"
+        self.label = f"cosh({self.x1})"
 
     def get_grad(self, grad):
-        grad = grad * (1 / np.sqrt(1 - np.square(self._x_val)))
+        grad = grad * np.sinh(self._x_val)
         return check_shape(grad, self.x)
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return -self.holder * (Matrix(1, "1") / sqrt(Matrix(1, "1") - square(self.x))),
+        return self.holder * sinh(self.x),
 
     def result(self):
         val = get_value(self.x)
         self._x_val = val
-        return np.arcsin(val)
+        return np.cosh(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.cosh(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
 class arcos(Function):
@@ -789,9 +1229,6 @@ class arcos(Function):
         self.x = x
         labels = get_label(x)
         self.x1 = labels[0]
-        self.label = f"arcos({self.x1})"
-
-    def update_label(self):
         self.label = f"arcos({self.x1})"
 
     def get_grad(self, grad):
@@ -808,65 +1245,175 @@ class arcos(Function):
         self._x_val = val
         return np.arccos(val)
 
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.arccos(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
-class ln(Function):
+
+class csc(Function):
+
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+        labels = get_label(x)
+        self.label = f"csc({labels[0]})"
+
+    def get_grad(self, grad):
+        grad = grad * (-1) * np.csc(self._x_val) * cot(self._x_val).val
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder * Matrix(-1, "(-1)") * csc(self.x) * cot(self.x),
+
+    def result(self):
+        val = get_value(self.x)
+        return 1 / np.sin(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = 1 / np.sin(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
+
+
+class tan(Function):
 
     def __init__(self, x):
         super().__init__(x)
         self.x = x
         labels = get_label(x)
         self.x1 = labels[0]
-        self.label = f"ln({self.x1})"
+        self.label = f"tan({self.x1})"
 
     def update_label(self):
-        self.label = f"ln({self.x1})"
+        self.label = f"tan({self.x1})"
 
     def get_grad(self, grad):
-        grad = grad * (1 / self._x_val)
+        grad = grad * (np.square(sec(self._x_val).val))
         return check_shape(grad, self.x)
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return self.holder * (Matrix(1, "1") / self.x),
-
-    def get_label(self):
-        return
+        return self.holder * sec(self.x) ** 2,
 
     def result(self):
         val = get_value(self.x)
-        assert np.all(val > 0), "input has element <= zero"
         self._x_val = val
-        return np.log(val)
+        return np.tan(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.tan(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
-class log(Function):
-    """
-    any base log
-    """
+class arctan(Function):
 
-    def __init__(self, base, x):
-        self.base = base
+    def __init__(self, x):
         super().__init__(x)
         self.x = x
-        assert base != 0, "base can't be zero"
         labels = get_label(x)
-        self.label = f"log({base}, {labels[0]})"
+        self.x1 = labels[0]
+        self.label = f"arctan({self.x1})"
+
+    def update_label(self):
+        self.label = f"arctan({self.x1})"
 
     def get_grad(self, grad):
-        grad = grad * (1 / (self._x_val * np.log(self.base)))
+        grad = grad * (1 / (1 + np.square(self._x_val)))
         return check_shape(grad, self.x)
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return self.holder * (Matrix(1, "1") / (self.x * ln(self.base))),
+        return self.holder / (Matrix(1, "1") + square(self.x)),
 
     def result(self):
         val = get_value(self.x)
-        assert np.all(val > 0), "input has element <= zero"
         self._x_val = val
-        return np.log(val) / np.log(self.base)
+        return np.arctan(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.arctan(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
+
+
+class tanh(Function):
+
+    def __init__(self, x):
+        super().__init__(x)
+        self.x = x
+        labels = get_label(x)
+        self.x1 = labels[0]
+        self.label = f"tanh({self.x1})"
+
+    def get_grad(self, grad):
+        grad = grad * (1 - np.power(self.val, 2))
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, f"grad{self.nth}")
+        return self.holder * (1 - tanh(self.x)**2),
+
+    def result(self):
+        val = get_value(self.x)
+        self._x_val = val
+        return np.tanh(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.tanh(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
 class cot(Function):
@@ -891,27 +1438,19 @@ class cot(Function):
         val = get_value(self.x)
         return 1 / np.tan(val)
 
-
-class csc(Function):
-
-    def __init__(self, x):
-        super().__init__(x)
-        self.x = x
-        labels = get_label(x)
-        self.label = f"csc({labels[0]})"
-
-    def get_grad(self, grad):
-        grad = grad * (-1) * np.csc(self.x.val) * cot(self.x.val).val
-        return check_shape(grad, self.x)
-
-    def get_graph(self):
-        if isinstance(self.holder, (np.ndarray, int, float)):
-            self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return self.holder * Matrix(-1, "-1") * csc(self.x) * cot(self.x),
-
-    def result(self):
-        val = get_value(self.x)
-        return 1 / np.sin(val)
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = 1 / np.tan(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
 class arcot(Function):
@@ -935,57 +1474,19 @@ class arcot(Function):
         val = get_value(self.x)
         return np.arctan(1 / val)
 
-
-class tan(Function):
-
-    def __init__(self, x):
-        super().__init__(x)
-        self.x = x
-        labels = get_label(x)
-        self.x1 = labels[0]
-        self.label = f"tan({self.x1})"
-
-    def update_label(self):
-        self.label = f"tan({self.x1})"
-
-    def get_grad(self, grad):
-        grad = grad * (np.square(sec(self.x.val).val))
-        return check_shape(grad, self.x)
-
-    def get_graph(self):
-        if isinstance(self.holder, (np.ndarray, int, float)):
-            self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return self.holder * sec(self.x) * sec(self.x),
-
-    def result(self):
-        val = get_value(self.x)
-        return np.tan(val)
-
-
-class arctan(Function):
-
-    def __init__(self, x):
-        super().__init__(x)
-        self.x = x
-        labels = get_label(x)
-        self.x1 = labels[0]
-        self.label = f"arctan({self.x1})"
-
-    def update_label(self):
-        self.label = f"arctan({self.x1})"
-
-    def get_grad(self, grad):
-        grad = grad * (1 / (1 + np.square(self.x.val)))
-        return check_shape(grad, self.x)
-
-    def get_graph(self):
-        if isinstance(self.holder, (np.ndarray, int, float)):
-            self.holder = Matrix(self.holder, f"grad{self.nth}")
-        return self.holder * (Matrix(1, "1") / (Matrix(1, "1") + square(self.x))),
-
-    def result(self):
-        val = get_value(self.x)
-        return np.arctan(val)
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.arctan(1 / x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
 class square(Function):
@@ -1013,6 +1514,20 @@ class square(Function):
     def result(self):
         val = get_value(self.x)
         return np.square(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.square(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
 class sqrt(Function):
@@ -1043,6 +1558,20 @@ class sqrt(Function):
     def result(self):
         val = get_value(self.x)
         return np.sqrt(val)
+
+    @staticmethod
+    def plot(*func, start=-10, end=10, num=300):
+        graph, axis = plt.subplots()
+        x = np.linspace(start, end, num)
+        y = np.sqrt(x)
+        axis.plot(x, y)
+        for i in func:
+            k = i(x)
+            axis.plot(x, k.val, label=f"{k.__class__.__name__}")
+        axis.set_xlabel('x')
+        axis.set_ylabel('y')
+        axis.legend()
+        plt.show()
 
 
 class argmax(Function):
@@ -1106,12 +1635,14 @@ class Prime:
                  debug=False,
                  create_graph=False,
                  nth=1,
-                 head=False):
+                 head=False,
+                 stack=None):
         self.head = head
         self.grad = grad
         self.debug = debug
         self.nth = nth
         self.create_graph = create_graph
+        self.stack = stack
         self.prime(func)
 
     def prime(self, func):
@@ -1120,6 +1651,24 @@ class Prime:
             if self.create_graph:
                 func.graph.nth = self.nth
             func.grad = self.grad if func.grad is None else func.grad + self.grad
+            if self.debug:
+                func._expression = np.array2string(
+                    func.val, prefix=f"Branch 2:  {self.__class__.__name__}(")
+                print("Branch 2:", func, func.grad, id(func))
+
+        elif isinstance(func, converge):
+            if self.create_graph:
+                func.graph.nth = self.nth
+            if func.parent.grad is None:
+                func.parent.grad = [self.grad]
+            else:
+                func.parent.grad.append(self.grad)
+            if func._islast:
+                Prime(func.parent,
+                      grad=None,
+                      nth=self.nth,
+                      debug=self.debug,
+                      create_graph=self.create_graph)
             if self.debug:
                 func._expression = np.array2string(
                     func.val, prefix=f"Branch 2:  {self.__class__.__name__}(")
@@ -1175,8 +1724,32 @@ class Prime:
                     func.nth = self.nth
                     graphs = func.get_graph()
                 if hasattr(func.x, 'graph'):
-                    func.x.graph = graphs[
-                        0] if func.x.graph is None else func.x.graph + graphs[0]
+                    func.x.graph = graphs[0] if func.x.graph is None else func.x.graph + graphs[0]
+                    func.x.graph.parent = func.x
+                    func.x.son = func.x.graph
+            Prime(func.x,
+                  grad,
+                  nth=self.nth,
+                  create_graph=self.create_graph,
+                  debug=self.debug)
+
+        elif isinstance(func, EqualSlice):
+            grad = func.get_grad(self.grad)
+            if self.debug:
+                func._expression = np.array2string(
+                    func.val, prefix=f"Branch 4:  {self.__class__.__name__}(")
+                print("Branch 4:", func, grad, id(func))
+            if self.create_graph:
+                if func.graph:
+                    func.holder = func.graph
+                    graphs = func.get_graph()
+                    func.graph = None
+                else:  # first node
+                    func.holder = self.grad
+                    func.nth = self.nth
+                    graphs = func.get_graph()
+                if hasattr(func.x, 'graph'):
+                    func.x.graph = graphs[0] if func.x.graph is None else func.x.graph + graphs[0]
                     func.x.graph.parent = func.x
                     func.x.son = func.x.graph
             Prime(func.x,
@@ -1219,6 +1792,16 @@ class View:
             print_result(self.current_task, self.total, self.time)
             self.graph_object.node(str(id(func)),
                                    f"{func}\n()",
+                                   style='filled',
+                                   fillcolor='#40e0d0')
+
+        elif isinstance(func, converge):
+
+            self.current_task += 1
+            print_result(self.current_task, self.total, self.time)
+            func.nth += 1
+            self.graph_object.node(str(id(func)),
+                                   f"{func.label}\n{func.shape}",
                                    style='filled',
                                    fillcolor='#40e0d0')
 
@@ -1265,22 +1848,23 @@ class View:
                 else:
                     new_label2 = str(func.y)
                     func.x2 = new_label2
-                func.update_label()
                 self.graph_object.edge(
                     str(id(func.x)),
                     string_func,
                     label=
-                    f"<{new_label1}<BR/>{func.shape}>")
+                    f"<{replace_upscript(str(powsimp(combsimp(cancel(new_label1)))))}<BR/>{func.shape}>")
                 self.graph_object.edge(
                     str(id(func.y)),
                     string_func,
                     label=
-                    f"<{new_label2}<BR/>{func.shape}>")
+                    f"<{replace_upscript(str(powsimp(combsimp(cancel(new_label2)))))}<BR/>{func.shape}>")
             else:
+                optimize = str(powsimp(combsimp(cancel(func.label))))
+                func._optimized_graph = compile(optimize, '<string>', 'eval')
                 self.graph_object.node(
                     name=str(id(label)),
                     label=
-                    f"<{func.label}<BR/>{func.shape}>",
+                    f"<{replace_upscript(optimize)}<BR/>{func.shape}>",
                     style='filled',
                     fillcolor=color_map[type(func)])
                 self.graph_object.edge(string_func, str(id(label)))
@@ -1296,17 +1880,16 @@ class View:
                 else:
                     new_label2 = str(func.y)
                     func.x2 = new_label2
-                func.update_label()
                 self.graph_object.edge(
                     str(id(func.x)),
                     string_func,
                     label=
-                    f"<{new_label1}<BR/>{func.shape}>")
+                    f"<{replace_upscript(str(powsimp(combsimp(cancel(new_label1)))))}<BR/>{func.shape}>")
                 self.graph_object.edge(
                     str(id(func.y)),
                     string_func,
                     label=
-                    f"<{new_label2}<BR/>{func.shape}>")
+                    f"<{replace_upscript(str(powsimp(combsimp(cancel(new_label2)))))}<BR/>{func.shape}>")
             self.current_task = v.current_task
         elif type(func) in derivatives:
             self.current_task += 1
@@ -1335,13 +1918,15 @@ class View:
                     str(id(func.x)),
                     string_func,
                     label=
-                    f"<{new_label1}<BR/>{func.shape}>")
+                    f"<{replace_upscript(str(powsimp(combsimp(cancel(new_label1)))))}<BR/>{func.shape}>")
             else:
+                optimize = str(powsimp(combsimp(cancel(func.label))))
+                func._optimized_graph = compile(optimize, '<string>', 'eval')
                 label = str(id(func.label))
                 self.graph_object.node(
                     name=label,
                     label=
-                    f"<{func.label}<BR/>{func.shape}>",
+                    f"<{replace_upscript(optimize)}<BR/>{func.shape}>",
                     style='filled',
                     fillcolor=color_map[type(func)])
                 self.graph_object.edge(string_func, label)
@@ -1352,14 +1937,55 @@ class View:
                     str(id(func.x)),
                     string_func,
                     label=
-                    f"<{new_label1}<BR/>{func.shape}>")
+                    f"<{replace_upscript(str(powsimp(combsimp(cancel(new_label1)))))}<BR/>{func.shape}>")
+        elif isinstance(func, EqualSlice):
+            self.current_task += 1
+            print_result(self.current_task, self.total, self.time)
 
-            self.current_task = v.current_task
+            string_func = str(id(func))
+            self.graph_object.node(name=string_func,
+                                   label=func.__class__.__name__,
+                                   style='filled',
+                                   fillcolor=color_map[type(func)])
+
+            for i in func.x:
+                v = View(i,
+                         graph_object=self.graph_object,
+                         current=self.current_task,
+                         total_task=self.total,
+                         time_begin=self.time)
+                if not self.head:
+                    if hasattr(i, 'label'):
+                        new_label1 = i.label
+                        func.x1 = new_label1
+                    else:
+                        new_label1 = str(i)
+                        func.x1 = new_label1
+                    self.graph_object.edge(
+                        str(id(i)),
+                        string_func,
+                        label=
+                        f"<{replace_upscript(str(powsimp(combsimp(cancel(new_label1)))))}<BR/>{func.shape}>")
+                else:
+                    optimize = func.label
+                    label = str(id(func.label))
+                    self.graph_object.node(
+                        name=label,
+                        label=
+                        f"<{optimize}<BR/>{func.shape}>",
+                        style='filled',
+                        fillcolor=color_map[type(func)])
+                    self.graph_object.edge(string_func, label)
+                    func.x1 = optimize
+                    self.graph_object.edge(
+                        str(id(i)),
+                        string_func,
+                        label=
+                        f"<{i.label}<BR/>{func.shape}>")
+                self.current_task = v.current_task
         elif isinstance(func.x, (int, float, np.ndarray)):
             self.current_task += 1
             print_result(self.current_task, self.total, self.time)
-            # self.graph_object.node(str(id(func)), f"{func}")
-            # self.graph_object.edge(str(id(func)), self.parent)
         return self.current_task
 
 
@@ -1444,6 +2070,10 @@ def search_nodes(func, count=0):
     elif type(func) in derivatives:
         count += 1
         count = search_nodes(func.x, count)
+    elif isinstance(func, EqualSlice):
+        count += 1
+        for i in func.x:
+            count = search_nodes(i, count)
     elif isinstance(func.x, (int, float, np.ndarray)):
         count += 1
     return count
@@ -1513,7 +2143,7 @@ def replace_upscript(inp: str):
 
 derivatives = (exp, sin, tan, sec, pow, ln, arcsin, arcos, arcot, arctan, cos,
                csc, cot, sqrt, square, transpose, trace, inv, Sum, Max, Slice,
-               reshape, Abs, Min, mean, log, repeat)
+               reshape, Abs, Min, mean, log, repeat, tanh, sinh, cosh)
 
 color_map = {
     Divide:
@@ -1582,4 +2212,8 @@ color_map = {
     f"{random.uniform(0.65, 1)} {random.uniform(0.65, 1)} {random.uniform(0.65, 1)}",
     repeat:
     f"{random.uniform(0.65, 1)} {random.uniform(0.65, 1)} {random.uniform(0.65, 1)}",
+    tanh:
+    f"{random.uniform(0.65, 1)} {random.uniform(0.65, 1)} {random.uniform(0.65, 1)}",
+    EqualSlice:
+    f"{random.uniform(0.65, 1)} {random.uniform(0.65, 1)} {random.uniform(0.65, 1)}"
 }
