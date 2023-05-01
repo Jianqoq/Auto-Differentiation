@@ -414,3 +414,128 @@ class TimeSoftmaxWithLoss:
         dx = dx.reshape((N, T, V))
 
         return dx
+    
+class Encoder:
+    def __init__(self, vocab_size=12, wordvec_size=100, hidden_size=100):
+        w1, w2, w3, b = np.random.randn(vocab_size, wordvec_size) / 100,\
+                        np.random.randn(wordvec_size, 4 * hidden_size) / np.sqrt(wordvec_size),\
+                        np.random.randn(hidden_size, 4 * hidden_size) / np.sqrt(hidden_size),\
+                        np.zeros(4 * hidden_size)
+        self.layers = [TimeEmbedding(w1),
+                       TimeLSTM(w2, w3, b, stateful=False)]
+
+        self.weights = self.layers[0].weights + self.layers[1].weights
+        self.grads = self.layers[0].grads + self.layers[1].grads
+        self.hs = None
+
+    def forward(self, xs):
+        wordembed, lstm = self.layers
+        out = wordembed.forward(xs)
+        hs = lstm.forward(out)
+        self.hs = hs
+        # hs is a set of hidden state based on a sentence, we only need the last hidden state
+        return hs[:, -1, :]
+
+    def backward(self, dh):
+        dhs = np.zeros_like(self.hs)
+        dhs[:, -1, :] = dh
+
+        wordembed, lstm = self.layers
+        dout = lstm.backward(dhs)
+        wordembed.backward(dout)
+
+
+class Decoder:
+    def __init__(self, vocab_size=12, wordvec_size=100, hidden_size=100):
+        w1, w2, w3, w4, b = np.random.randn(vocab_size, wordvec_size) / 100,\
+                        np.random.randn(wordvec_size + hidden_size, 4 * hidden_size) / np.sqrt(wordvec_size),\
+                        np.random.randn(hidden_size, 4 * hidden_size) / np.sqrt(hidden_size), \
+                        np.random.randn(hidden_size * 2, vocab_size) / np.sqrt(hidden_size), \
+                        np.zeros(4 * hidden_size)
+        b1 = np.zeros(vocab_size)
+        self.layers = [TimeEmbedding(w1),
+                       TimeLSTM(w2, w3, b, stateful=True),
+                       TimeAffine(w4, b1)]
+
+        self.loss_layer = [TimeSoftmaxWithLoss()]
+        self.weights = []
+        self.grads = []
+        self.hidden_size = hidden_size
+        for layer in self.layers:
+            self.weights += layer.weights
+            self.grads += layer.grads
+        self.cache = None
+        self.hs = None
+
+    def forward(self, xs, hidden_state):
+        self.layers[1].set_state(hidden_state)
+        time_embedding, time_lstm, time_affine = self.layers
+        out = time_embedding.forward(xs)
+        N, T = xs.shape
+        hidden = np.repeat(hidden_state, T, axis=0).reshape(N, T, self.hidden_size)
+        concate = np.concatenate((hidden, out), axis=-1)
+        out = time_lstm.forward(concate)
+        out = np.concatenate((hidden, out), axis=-1)
+        out = time_affine.forward(out)
+        return out
+
+    def backward(self, dout):
+        time_embedding, time_lstm, time_affine = self.layers
+        dout = time_affine.backward(dout)
+        dout, dhs0 = dout[:, :, self.hidden_size:], dout[:, :, :self.hidden_size]
+        dout = time_lstm.backward(dout)
+        dout, dhs1 = dout[:, :, self.hidden_size:], dout[:, :, :self.hidden_size]
+        time_embedding.backward(dout)
+        dhs = dhs0 + dhs1
+        dh = time_lstm.dh + np.sum(dhs, axis=1)
+        return dh
+
+    def generate(self, h, xs, size):
+        sampled = []
+        id = xs
+        N, T = xs.shape
+        embed, lstm, affine = self.layers
+        lstm.set_state(h)
+
+        hidden = h.reshape(N, T, self.hidden_size)
+        for _ in range(size):
+            out = embed.forward(id)
+
+            concate = np.concatenate((hidden, out), axis=-1)
+            out = lstm.forward(concate)
+            out = np.concatenate((hidden, out), axis=-1)
+            score = affine.forward(out)
+
+            id = np.argmax(score, axis=2)
+            sampled.append(int(id))
+
+        return sampled
+
+
+class Seq2Seq:
+    def __init__(self, vocab_size=12, wordvec_size=100, hidden_size=100):
+        self.encoder = Encoder(vocab_size, wordvec_size, hidden_size)
+        self.decoder = Decoder(vocab_size, wordvec_size, hidden_size)
+        self.loss_layer = TimeSoftmaxWithLoss()
+        self.weights = self.encoder.weights + self.decoder.weights
+        self.grads = self.encoder.grads + self.decoder.grads
+
+    def forward(self, xs, ts):
+        decoder_input, decoder_target = ts[:, :-1], ts[:, 1:]
+        h = self.encoder.forward(xs)
+        score = self.decoder.forward(decoder_input, h)
+        loss = self.loss_layer.forward(score, decoder_target)
+        return loss
+
+    def backward(self, dout=1):
+        dout = self.loss_layer.backward(dout)
+        dh = self.decoder.backward(dout)
+        self.encoder.backward(dh)
+
+    def generate(self, question, word_id, size):
+        h = self.encoder.forward(question)
+        answer = self.decoder.generate(h, np.array(word_id['_']).reshape(1, 1), size)
+        return answer
+
+    def reset_state(self):
+        self.decoder.layers[1].reset_state()
