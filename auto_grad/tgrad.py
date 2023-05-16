@@ -1,6 +1,9 @@
 import inspect
+
+import numpy
+
 import server
-import cupy as np
+import numpy as np
 import graphviz
 import random
 from time import time
@@ -18,6 +21,7 @@ class Function:
         self.val = self.result()
         self.grad_name = 0
         self.holder = None
+        self.T = self.val.T
         self.graph = None
         self.grad = None
         self.parent = None
@@ -88,12 +92,6 @@ class Function:
     def reshape(self, *shape):
         if len(shape) == 1 and isinstance(shape[0], tuple):
             shape = shape[0]
-        elif len(shape) == 2 and isinstance(shape[0], int) and isinstance(
-                shape[1], int):
-            pass
-        else:
-            raise TypeError(
-                "Invalid arguments, should be either tuple (1, 2) or 1, 2")
         return reshape(self, shape)
 
     def transpose(self, *axis):
@@ -200,6 +198,113 @@ class Function:
 
     def __len__(self):
         return len(self.val)
+
+
+class tensordot(Function):
+
+    def __init__(self, x, y, axes=2):
+        self.axes = axes
+        self.dot_shape = None
+        self.yt = None
+        self.xt = None
+        self.newshape_a = None
+        self.newshape_b = None
+        self.oldaxes_a = None
+        self.oldaxes_b = None
+        super().__init__(x, y)
+        self.vars = 2
+
+    def get_grad(self, grad):
+        grad = grad.reshape(self.dot_shape)
+        at_grad = grad @ self.yt.T
+        bt_grad = self.xt.T @ grad
+        at_grad = at_grad.reshape(self.newshape_a)
+        bt_grad = bt_grad.reshape(self.newshape_b)
+        return at_grad.transpose(self.oldaxes_a), bt_grad.transpose(self.oldaxes_b)
+
+    def result(self):
+        """ code from numpy source code"""
+        x, y = self.get_values(self.x, self.y)
+        axes = self.axes
+        try:
+            iter(axes)
+        except Exception:
+            # if axes argument is int it will create a list.
+            # a = [-7, -6, -5, -4, -3, -2, -1]
+            # b = [0, 1, 2, 3, 4, 5, 6]
+            axes_x = list(range(-axes, 0))
+            axes_y = list(range(0, axes))
+        else:
+            # if axes is iterable
+            axes_x, axes_y = axes
+        try:
+            axes_x = list(axes_x)
+        except TypeError:
+            axes_x = [axes_x]
+        try:
+            axes_y = list(axes_y)
+        except TypeError:
+            axes_y = [axes_y]
+
+        x_not_calculate = list(enumerate(x.shape))
+        y_not_calculate = list(enumerate(y.shape))
+
+        xaxis_shape_to_sum = [x_not_calculate.pop(idx) for idx in axes_x]
+        yaxis_shape_to_sum = [y_not_calculate.pop(idx) for idx in axes_y]
+
+        new_x_shape1 = 1
+        x_not_calculate0 = []
+        y_not_calculate0 = []
+        xaxis_shape_to_sum0 = []
+        yaxis_shape_to_sum0 = []
+        for idx, i in x_not_calculate:
+            new_x_shape1 *= i
+            x_not_calculate0.append(idx)
+        new_x_shape2 = 1
+        for idx, i in xaxis_shape_to_sum:
+            new_x_shape2 *= i
+            xaxis_shape_to_sum0.append(idx)
+        new_y_shape1 = 1
+        for idx, i in yaxis_shape_to_sum:
+            new_y_shape1 *= i
+            yaxis_shape_to_sum0.append(idx)
+        new_y_shape2 = 1
+        for idx, i in y_not_calculate:
+            new_y_shape2 *= i
+            y_not_calculate0.append(idx)
+
+        x_transpose_axis = x_not_calculate0 + xaxis_shape_to_sum0
+        y_transpose_axis = yaxis_shape_to_sum0 + y_not_calculate0
+
+        final_x_shape = [i for idx, i in x_not_calculate]
+        final_y_shape = [i for idx, i in y_not_calculate]
+
+        self.oldaxes_a = x_transpose_axis
+        self.oldaxes_b = y_transpose_axis
+
+        cache1 = x.transpose(x_transpose_axis)
+        cache2 = y.transpose(y_transpose_axis)
+
+        self.newshape_a = cache1.shape
+        self.newshape_b = cache2.shape
+
+        x = cache1.reshape(new_x_shape1, new_x_shape2)
+        y = cache2.reshape(new_y_shape1, new_y_shape2)
+        self.yt = y
+        self.xt = x
+        out = x @ y
+        self.dot_shape = out.shape
+        return out.reshape(final_x_shape + final_y_shape)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, self.grad_name)
+        graph = (self.holder@transpose(self.y), transpose(self.x)@self.holder)
+        return graph
+
+    def get_label(self):
+        labels = get_label(self.x, self.y)
+        self.label = f"{labels[0]} @ {labels[1]}"
 
 
 class Matrix(Function):
@@ -427,21 +532,6 @@ class Matmul(Function):
         labels = get_label(self.x, self.y)
         self.label = f"{labels[0]} @ {labels[1]}"
 
-    def gradient(self,
-                 grad: list | None = None,
-                 debug=False,
-                 create_graph=False):
-        assert isinstance(grad, list), "Provide list to calculate the grad"
-        grad = np.array(grad)
-        shape1 = self.x.T.shape
-        shape = grad.shape
-        shape2 = self.y.T.shape
-        assert shape1[1] == shape[0], f"Matrix1 {shape1} != {shape} param"
-        assert shape2[0] == shape[1], f"Matrix2 {shape2} != {shape} param"
-        Prime(self, grad=grad)
-        self.x.grad = Matrix(self.x.grad)
-        self.y.grad = Matrix(self.y.grad)
-
 
 class starmulti(Function):
 
@@ -486,7 +576,7 @@ class transpose(Function):
         super().__init__(x)
 
     def get_grad(self, grad):
-        grad = grad.T if self.axis is not None else grad.transpose(self.axis)
+        grad = grad.T if self.axis is None else grad.transpose(self.axis)
         return check_shape(grad, self.x.shape)
 
     def get_label(self):
@@ -496,7 +586,7 @@ class transpose(Function):
 
     def result(self):
         val = self.get_value(self.x)
-        return val.T if self.axis is not None else np.transpose(val, self.axis)
+        return val.T if self.axis is None else np.transpose(val, self.axis)
 
     def gradient(self,
                  grad: list | float | np.ndarray | None = None,
@@ -1781,7 +1871,7 @@ class Prime:
         append = __stack.append
         while __stack:
             current_func, grad = __stack.pop()
-            if isinstance(current_func, (int, float, np.ndarray)):
+            if isinstance(current_func, (int, float, np.ndarray, numpy.ndarray)):
                 continue
             var = current_func.vars
             if var == 0 or var == 3:
@@ -2104,7 +2194,7 @@ def get_label(*args):
             i.get_label()
             ls.append(i.label)
         else:
-            str(i)
+            ls.append("array")
     return ls
 
 
@@ -2271,5 +2361,7 @@ color_map = {
     stack:
     f"{random.uniform(0.65, 1)} {random.uniform(0.65, 1)} {random.uniform(0.65, 1)}",
     softmax:
+    f"{random.uniform(0.65, 1)} {random.uniform(0.65, 1)} {random.uniform(0.65, 1)}",
+    tensordot:
     f"{random.uniform(0.65, 1)} {random.uniform(0.65, 1)} {random.uniform(0.65, 1)}",
 }
