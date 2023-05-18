@@ -18,6 +18,7 @@ class Function:
         self.y = y
         self.vars = 1
         self.has_conv = 0
+        self.repeats = None
         self.val = self.result()
         self.grad_name = 0
         self.holder = None
@@ -31,7 +32,7 @@ class Function:
         self.x1 = None
         self.x2 = None
         self.abbreviation = None
-        self.size = None
+        self.size = self.val.size
         self.shape = self.val.shape
 
     def update(self):
@@ -95,7 +96,7 @@ class Function:
         return reshape(self, shape)
 
     def transpose(self, *axis):
-        return transpose(self, axis)
+        return transpose(self, axis if len(axis) > 0 else None)
 
     def get_values(self, x, y):
         """
@@ -211,6 +212,10 @@ class tensordot(Function):
         self.newshape_b = None
         self.oldaxes_a = None
         self.oldaxes_b = None
+        self.xsaved_shape = None
+        self.ysaved_shape = None
+        self.newaxes_a = None
+        self.newaxes_b = None
         super().__init__(x, y)
         self.vars = 2
 
@@ -224,87 +229,93 @@ class tensordot(Function):
 
     def result(self):
         """ code from numpy source code"""
-        x, y = self.get_values(self.x, self.y)
+        a, b = self.get_values(self.x, self.y)
         axes = self.axes
         try:
             iter(axes)
         except Exception:
-            # if axes argument is int it will create a list.
-            # a = [-7, -6, -5, -4, -3, -2, -1]
-            # b = [0, 1, 2, 3, 4, 5, 6]
-            axes_x = list(range(-axes, 0))
-            axes_y = list(range(0, axes))
+            axes_a = list(range(-axes, 0))
+            axes_b = list(range(0, axes))
         else:
-            # if axes is iterable
-            axes_x, axes_y = axes
+            axes_a, axes_b = axes
         try:
-            axes_x = list(axes_x)
+            na = len(axes_a)
+            axes_a = list(axes_a)
         except TypeError:
-            axes_x = [axes_x]
+            axes_a = [axes_a]
+            na = 1
         try:
-            axes_y = list(axes_y)
+            nb = len(axes_b)
+            axes_b = list(axes_b)
         except TypeError:
-            axes_y = [axes_y]
+            axes_b = [axes_b]
+            nb = 1
 
-        x_not_calculate = list(enumerate(x.shape))
-        y_not_calculate = list(enumerate(y.shape))
+        as_ = a.shape
+        nda = a.ndim
+        bs = b.shape
+        ndb = b.ndim
+        equal = True
+        if na != nb:
+            equal = False
+        else:
+            for k in range(na):
+                if as_[axes_a[k]] != bs[axes_b[k]]:
+                    equal = False
+                    break
+                if axes_a[k] < 0:
+                    axes_a[k] += nda
+                if axes_b[k] < 0:
+                    axes_b[k] += ndb
+        if not equal:
+            raise ValueError("shape-mismatch for sum")
 
-        xaxis_shape_to_sum = [x_not_calculate.pop(idx) for idx in axes_x]
-        yaxis_shape_to_sum = [y_not_calculate.pop(idx) for idx in axes_y]
+        # Move the axes to sum over to the end of "a"
+        # and to the front of "b"
+        notin = [k for k in range(nda) if k not in axes_a]
+        newaxes_a = notin + axes_a
+        N2 = 1
+        for axis in axes_a:
+            N2 *= as_[axis]
+        self.xsaved_shape = newshape_a = (int(np.multiply.reduce([as_[ax] for ax in notin])), N2)
+        olda = [as_[axis] for axis in notin]
 
-        new_x_shape1 = 1
-        x_not_calculate0 = []
-        y_not_calculate0 = []
-        xaxis_shape_to_sum0 = []
-        yaxis_shape_to_sum0 = []
-        for idx, i in x_not_calculate:
-            new_x_shape1 *= i
-            x_not_calculate0.append(idx)
-        new_x_shape2 = 1
-        for idx, i in xaxis_shape_to_sum:
-            new_x_shape2 *= i
-            xaxis_shape_to_sum0.append(idx)
-        new_y_shape1 = 1
-        for idx, i in yaxis_shape_to_sum:
-            new_y_shape1 *= i
-            yaxis_shape_to_sum0.append(idx)
-        new_y_shape2 = 1
-        for idx, i in y_not_calculate:
-            new_y_shape2 *= i
-            y_not_calculate0.append(idx)
+        notin = [k for k in range(ndb) if k not in axes_b]
+        newaxes_b = axes_b + notin
+        N2 = 1
+        for axis in axes_b:
+            N2 *= bs[axis]
+        self.ysaved_shape = newshape_b = (N2, int(np.multiply.reduce([bs[ax] for ax in notin])))
+        oldb = [bs[axis] for axis in notin]
 
-        x_transpose_axis = x_not_calculate0 + xaxis_shape_to_sum0
-        y_transpose_axis = yaxis_shape_to_sum0 + y_not_calculate0
+        self.oldaxes_a = newaxes_a
+        self.oldaxes_b = newaxes_b
 
-        final_x_shape = [i for idx, i in x_not_calculate]
-        final_y_shape = [i for idx, i in y_not_calculate]
-
-        self.oldaxes_a = x_transpose_axis
-        self.oldaxes_b = y_transpose_axis
-
-        cache1 = x.transpose(x_transpose_axis)
-        cache2 = y.transpose(y_transpose_axis)
+        cache1 = a.transpose(newaxes_a)
+        cache2 = b.transpose(newaxes_b)
 
         self.newshape_a = cache1.shape
         self.newshape_b = cache2.shape
 
-        x = cache1.reshape(new_x_shape1, new_x_shape2)
-        y = cache2.reshape(new_y_shape1, new_y_shape2)
-        self.yt = y
-        self.xt = x
-        out = x @ y
+        a = cache1.reshape(newshape_a)
+        b = cache2.reshape(newshape_b)
+        self.xt = a
+        self.yt = b
+        out = a @ b
         self.dot_shape = out.shape
-        return out.reshape(final_x_shape + final_y_shape)
+        return out.reshape(olda + oldb)
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, self.grad_name)
-        graph = (self.holder@transpose(self.y), transpose(self.x)@self.holder)
-        return graph
+        grad = self.holder.reshape(self.dot_shape)
+        at_grad = grad @ (self.y.transpose(*self.oldaxes_b).reshape(self.ysaved_shape)).transpose()
+        bt_grad = (self.x.transpose(*self.oldaxes_a).reshape(self.xsaved_shape)).transpose() @ grad
+        return at_grad.reshape(self.newshape_a).transpose(*self.oldaxes_a), bt_grad.reshape(self.newshape_b).transpose(*self.oldaxes_b)
 
     def get_label(self):
         labels = get_label(self.x, self.y)
-        self.label = f"{labels[0]} @ {labels[1]}"
+        self.label = f"np.tensordot({labels[0]}, {labels[1]}, axes={self.axes})"
 
 
 class Matrix(Function):
@@ -512,25 +523,32 @@ class reshape(Function):
 class Matmul(Function):
 
     def __init__(self, x, y):
+        self._brocased = False
         super().__init__(x, y)
         self.vars = 2
 
     def get_grad(self, grad):
+        if self._brocased:
+            return grad @ self.y.val.transpose(0, 1, 3, 2), self.x.val.transpose(0, 1, 3, 2) @ grad
         return check_shape(grad @ self.y.T, self.x), check_shape(self.x.T @ grad, self.y)
 
     def result(self):
         val1, val2 = self.get_values(self.x, self.y)
+        if val1.ndim > 2:
+            self._brocased = True
         return np.matmul(val1, val2)
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, self.grad_name)
+        if self._brocased:
+            return self.holder @ self.y.transpose(0, 1, 3, 2), self.x.transpose(0, 1, 3, 2) @ self.holder
         graph = (self.holder@transpose(self.y), transpose(self.x)@self.holder)
         return graph
 
     def get_label(self):
         labels = get_label(self.x, self.y)
-        self.label = f"{labels[0]} @ {labels[1]}"
+        self.label = f"({labels[0]} @ {labels[1]})"
 
 
 class starmulti(Function):
@@ -571,41 +589,28 @@ class starmulti(Function):
 
 class transpose(Function):
 
-    def __init__(self, x, axis: tuple | None = None):
+    def __init__(self, x, axis = None):
         self.axis = axis
         super().__init__(x)
 
     def get_grad(self, grad):
         grad = grad.T if self.axis is None else grad.transpose(self.axis)
-        return check_shape(grad, self.x.shape)
+        return check_shape(grad, self.x)
+
+    def get_graph(self):
+        if isinstance(self.holder, (np.ndarray, int, float)):
+            self.holder = Matrix(self.holder, self.grad_name)
+        result = Matrix(self.holder.T) if self.axis is None else self.holder.transpose(*self.axis)
+        return result,
 
     def get_label(self):
         labels = get_label(self.x)
         self.x1 = labels[0]
-        self.label = f"{self.x1}.T" if self.axis is None else f"np.transpose({self.x1}, axis={self.axis})"
+        self.label = f"{self.x1}.T" if self.axis is None else f"np.transpose({self.x1}, axes={self.axis})"
 
     def result(self):
         val = self.get_value(self.x)
-        return val.T if self.axis is None else np.transpose(val, self.axis)
-
-    def gradient(self,
-                 grad: list | float | np.ndarray | None = None,
-                 grad_name="",
-                 create_graph=False):
-        """
-        grad has to have the same shape as self.x
-
-        grad: trace((d(loss)/d(self)).T*d(self.x.T))  --> trace(d(loss)/d(self)*d(self.x))
-
-        :return: d(loss)/d(self)
-        """
-        assert isinstance(grad, list), "Provide list to calculate the grad"
-        grad = np.array(grad)
-        shape1 = self.x.T.shape
-        shape = grad.shape
-        assert shape1 == shape, f"Matrix1 {shape1} != {shape} param"
-        Prime(self, grad=grad)
-        self.x.grad = Matrix(self.x.grad)
+        return val.T if self.axis is None else val.transpose(self.axis)
 
 
 class trace(Function):
@@ -710,7 +715,7 @@ class sum(Function):
             self.holder = Matrix(self.holder, self.grad_name)
         shape = [*self.x.val.shape]
         shape[self.axis] = 1
-        return repeat(reshape(self.holder, shape), self.x.val.shape[self.axis], axis=self.axis),
+        return graph_check_shape(repeat(reshape(self.holder, shape), self.x.val.shape[self.axis], axis=self.axis), self.x),
 
     def result(self):
         return np.sum(self.get_value(self.x), axis=self.axis, keepdims=self.keepdims)
@@ -991,31 +996,32 @@ class mean(Function):
 class Divide(Function):
 
     def __init__(self, x, y):
+        self._brocasted = False
         super().__init__(x, y)
         self.vars = 2
 
     def get_grad(self, grad):
-        grad1 = np.array(grad) / (self.y.val + 1e-8)
-        grad2 = np.array(grad) * (-self.x.val / (np.square(self.y.val) + 1e-8))
+        grad1 = grad / (self.y.val + 1e-8)
+        grad2 = grad * (-self.x.val / (np.square(self.y.val) + 1e-8))
         return check_shape(grad1, self.x), check_shape(grad2, self.y)
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
             self.holder = Matrix(self.holder, self.grad_name)
-        return self.holder/self.y, self.holder * Matrix(-1., "(-1)")*self.x / square(self.y)
+        return graph_check_shape(self.holder/self.y, self.x), graph_check_shape(self.holder * ((Matrix(-1., "(-1)")*self.x) / square(self.y)), self.y)
 
     def get_label(self):
         labels = get_label(self.x, self.y)
         self.x1 = labels[0]
         self.x2 = labels[1]
         if isinstance(self.x, (Add, sub)) and not isinstance(self.y, (Add, sub)):
-            self.label = f"({self.x1})/{self.x2}"
+            self.label = f"(({self.x1})/{self.x2})"
         elif not isinstance(self.x, (Add, sub)) and isinstance(self.y, (Add, sub)):
-            self.label = f"{self.x1}/({self.x2})"
+            self.label = f"({self.x1}/({self.x2}))"
         elif isinstance(self.x, (Add, sub)) and isinstance(self.y, (Add, sub)):
-            self.label = f"({self.x1})/({self.x2})"
+            self.label = f"(({self.x1})/({self.x2}))"
         else:
-            self.label = f"{self.x1}/{self.x2}"
+            self.label = f"({self.x1}/{self.x2})"
 
     def result(self):
         result1, result2 = self.get_values(self.x, self.y)
@@ -1062,7 +1068,7 @@ class exp(Function):
 
     def get_label(self):
         labels = get_label(self.x)
-        self.label = f"exp({labels[0]})"
+        self.label = f"np.exp({labels[0]})"
 
     def result(self) -> np.ndarray:
         val = self.get_value(self.x)
@@ -1766,10 +1772,9 @@ class sqrt(Function):
         return check_shape(grad, self.x)
 
     def get_label(self):
-        if self.label is None:
-            labels = get_label(self.x)
-            self.x1 = labels[0]
-            self.label = f"np.sqrt({self.x1})"
+        labels = get_label(self.x)
+        self.x1 = labels[0]
+        self.label = f"np.sqrt({self.x1})"
 
     def get_graph(self):
         if isinstance(self.holder, (np.ndarray, int, float)):
@@ -2159,16 +2164,53 @@ def check_shape(grad, inp):
     """
     :return: real grad
     """
-    shape = inp.shape
-    offset = len(grad.shape) - len(shape)
-    if offset == 0:
+    try:
+        shape = inp.shape
+    except:
+        shape = ()
+    try:
+        grad_shape = grad.shape
+    except:
+        grad_shape = ()
+    offset = len(grad_shape) - len(shape)
+    if offset == 0 and grad_shape == shape:
         return grad
-    elif offset == 0:
-        raise RuntimeError(f"grad shape {grad.shape} smaller than {shape}")
+    elif offset < 0:
+        raise RuntimeError(f"grad shape {grad_shape} smaller than {shape}")
+    elif offset == 0 and grad_shape != shape:
+        repeats1 = [max(s1, s2) // min(s1, s2) for s1, s2 in zip(shape, grad_shape)]
+        grad = np.sum(grad, axis=np.argmax(repeats1), keepdims=True)
     for _ in range(offset):
         grad = np.sum(grad, axis=0)
     if shape and np.size(grad) != np.size(inp.val) and not np.size(grad) % np.size(inp.val):
         grad = np.sum(grad, axis=0, keepdims=True)
+    return grad
+
+
+def graph_check_shape(grad, inp):
+    """
+    :return: real grad
+    """
+    try:
+        shape = inp.shape
+    except:
+        shape = ()
+    try:
+        grad_shape = grad.shape
+    except:
+        grad_shape = ()
+    offset = len(grad_shape) - len(shape)
+    if offset == 0 and grad_shape == shape:
+        return grad
+    elif offset < 0:
+        raise RuntimeError(f"grad shape {grad_shape} smaller than {shape}")
+    elif offset == 0 and grad_shape != shape:
+        repeats1 = [max(s1, s2) // min(s1, s2) for s1, s2 in zip(shape, grad_shape)]
+        grad = sum(grad, axis=np.argmax(repeats1), keepdims=True)
+    for _ in range(offset):
+        grad = sum(grad, axis=0, keepdims=True)
+    if shape and np.size(grad.val) != np.size(inp.val) and not np.size(grad.val) % np.size(inp.val):
+        grad = sum(grad, axis=0, keepdims=True)
     return grad
 
 
@@ -2282,6 +2324,16 @@ def replace_upscript(inp: str):
         op += ''.join(i)
     return op
 
+
+def check_brocast(result1, result2):
+    try:
+        broadcasted = np.broadcast(result1, result2)
+        shape = broadcasted.shape
+        repeats1 = max([s1 // s2 if s1 % s2 == 0 else -1 for s1, s2 in zip(shape, result2.shape)])
+        repeats2 = max([s1 // s2 if s1 % s2 == 0 else -1 for s1, s2 in zip(shape, result1.shape)])
+        return max(repeats1, repeats2)
+    except ValueError:
+        return 0
 
 color_map = {
     Divide:
